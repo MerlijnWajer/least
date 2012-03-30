@@ -9,11 +9,15 @@ int open_pdf(fz_context *context, char *filename) {
     fz_device *dev;
     fz_rect bounds;
     fz_bbox bbox;
+    fz_matrix ctm;
     int faulty;
-    int i;
+    int i, res;
     char * s;
 
     faulty = 0;
+
+    /* Resolution */
+    res = (int)(72 * 1.5);
 
     printf("Opening: %s\n", filename);
 
@@ -33,22 +37,24 @@ int open_pdf(fz_context *context, char *filename) {
     if (faulty)
         return faulty;
 
-
+    ctm = fz_scale(res / 72.0f, res / 72.0f);
 
     for(i = 0; i < fz_count_pages(doc); i++) {
         printf("Rendering page %d\n", i);
         page = fz_load_page(doc, i);
 
         bounds = fz_bound_page(doc, page);
+        bounds.x1 *= res / 72.0f;
+        bounds.y1 *= res / 72.0f;
         bbox = fz_round_rect(bounds);
 
-        image = fz_new_pixmap_with_bbox(context, fz_device_gray, bbox);
+        image = fz_new_pixmap_with_bbox(context, fz_device_rgb, bbox);
         dev = fz_new_draw_device(context, image);
 
         fz_clear_pixmap_with_value(context, image, 255);
-        fz_run_page(doc, page, dev, fz_identity, NULL);
+        fz_run_page(doc, page, dev, ctm, NULL);
 
-    /* draw onto pixmap here */
+        /* Draw onto pixmap here */
 
         s = malloc(sizeof(char) * 20);
         sprintf(s, "/tmp/test%d.png", i);
@@ -84,4 +90,6 @@ int main (int argc, char **argv) {
 
 
     fz_free_context(context);
+
+    return 0;
 }
