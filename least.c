@@ -12,26 +12,20 @@ GLuint *pages;
 unsigned int pagec;
 
 static int pixmap_to_texture(void *pixmap, int width, int height, int format, int type);
+static int page_to_texture(fz_context *ctx, fz_document *doc, int pagenum);
 
+float scroll = 0.0f;
 
 int open_pdf(fz_context *context, char *filename) {
     fz_stream *file;
     fz_document *doc;
-    fz_page *page;
-    fz_pixmap *image;
-    fz_device *dev;
-    fz_rect bounds;
-    fz_bbox bbox;
-    fz_matrix ctm;
     int faulty;
     unsigned int i;
-    int res;
     /* char * s; */
 
     faulty = 0;
 
     /* Resolution */
-    res = (int)(72 * 1.5);
 
     printf("Opening: %s\n", filename);
 
@@ -51,46 +45,12 @@ int open_pdf(fz_context *context, char *filename) {
     if (faulty)
         return faulty;
 
-    ctm = fz_scale(res / 72.0f, res / 72.0f);
-
     /* XXX error handling */
     pagec = fz_count_pages(doc);
     pages = malloc(sizeof(unsigned int) * pagec);
 
     for(i = 0; i < pagec; i++) {
-        printf("Rendering page %d\n", i);
-        page = fz_load_page(doc, i);
-
-        bounds = fz_bound_page(doc, page);
-        bounds.x1 *= res / 72.0f;
-        bounds.y1 *= res / 72.0f;
-        bbox = fz_round_rect(bounds);
-
-        image = fz_new_pixmap_with_bbox(context, fz_device_rgb, bbox);
-        dev = fz_new_draw_device(context, image);
-
-        fz_clear_pixmap_with_value(context, image, 255);
-        fz_run_page(doc, page, dev, ctm, NULL);
-
-        /* Draw onto pixmap here */
-        pages[i] = pixmap_to_texture((void*)fz_pixmap_samples(context, image),
-                fz_pixmap_width(context, image),
-                fz_pixmap_height(context, image), 0, 0);
-
-        /*
-        s = malloc(sizeof(char) * 20);
-        sprintf(s, "/tmp/test%d.png", i);
-
-        printf("Saving page %d to %s\n", i, s);
-        fz_write_png(context, image, s, 0);
-        free(s);
-        */
-
-        fz_drop_pixmap(context, image);
-
-        fz_free_device(dev);
-
-        fz_free_page(doc, page);
+        page_to_texture(context, doc, i);
     }
 
 
@@ -100,6 +60,66 @@ int open_pdf(fz_context *context, char *filename) {
     printf("Done opening\n");
     return 0;
 }
+
+static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
+    fz_page *page;
+    fz_pixmap *image;
+    fz_device *dev;
+    fz_rect bounds;
+    fz_bbox bbox;
+    fz_matrix ctm;
+    int res;
+
+    res = 72.0f * 1.0;
+
+    ctm = fz_scale(res / 72.0f, res / 72.0f);
+    res = (int)(72 * 1.0f);
+
+
+    printf("Rendering page %d\n", pagenum);
+    page = fz_load_page(doc, pagenum);
+
+    bounds = fz_bound_page(doc, page);
+    bounds.x1 *= res / 72.0f;
+    bounds.y1 *= res / 72.0f;
+    bbox = fz_round_rect(bounds);
+
+    image = fz_new_pixmap_with_bbox(context, fz_device_rgb, bbox);
+    dev = fz_new_draw_device(context, image);
+
+    fz_clear_pixmap_with_value(context, image, 255);
+    fz_run_page(doc, page, dev, ctm, NULL);
+
+    /* Draw onto pixmap here */
+    pages[pagenum] = pixmap_to_texture((void*)fz_pixmap_samples(context, image),
+            fz_pixmap_width(context, image),
+            fz_pixmap_height(context, image), 0, 0);
+
+    /*
+    s = malloc(sizeof(char) * 20);
+    sprintf(s, "/tmp/test%d.png", i);
+
+    printf("Saving page %d to %s\n", i, s);
+    fz_write_png(context, image, s, 0);
+    free(s);
+    */
+
+    fz_drop_pixmap(context, image);
+
+    fz_free_device(dev);
+
+    fz_free_page(doc, page);
+
+    return pages[pagenum];
+}
+
+/*
+static int reload_texture(fz_context *context, fz_document *doc, int pagenum) {
+
+
+    return pages[pagenum];
+}
+*/
 
 static int pixmap_to_texture(void *pixmap, int width, int height, int format, int type)
 {
@@ -143,12 +163,33 @@ static void handle_key_down(SDL_keysym * keysym)
 	case SDLK_ESCAPE:
 		quit_tutorial(0);
 		break;
+
+    case SDLK_DOWN:
+        scroll -= 42.;
+        break;
+
+    case SDLK_UP:
+        scroll += 42.;
+        break;
+
+    case SDLK_PAGEDOWN:
+        scroll -= imh + 20;
+        break;
+
+    case SDLK_PAGEUP:
+        scroll += imh + 20;
+        break;
+
 	default:
 		break;
 	}
-
 }
 
+static void handle_resize(SDL_ResizeEvent e) {
+    printf("Resized to (%d, %d)\n", e.w, e.h);
+
+    return;
+}
 
 static void setup_opengl(int width, int height)
 {
@@ -276,6 +317,8 @@ static void process_events(void)
 			/* Handle quit requests (like Ctrl-c). */
 			quit_tutorial(0);
 			break;
+        case SDL_VIDEORESIZE:
+            handle_resize(event.resize);
 		}
 
 	}
@@ -284,7 +327,8 @@ static void process_events(void)
 
 static void draw_screen(void)
 {
-    int i;
+    unsigned int i;
+    /* static float vloot = 0.f; */
 
 	glEnable(GL_TEXTURE_2D);
 	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
@@ -296,8 +340,13 @@ static void draw_screen(void)
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
 
+    /*
+    vloot += 0.1;
+    glRotatef(vloot, 0.f, 0.f, 1.0f);
+    */
+    glTranslatef(0.f, scroll, 0.f);
 
-    for(i = 0; i < 2; i++) {
+    for(i = 0; i < pagec; i++) {
         glBindTexture(GL_TEXTURE_2D, pages[i]);
         /* Send our triangle data to the pipeline. */
         glBegin(GL_QUADS);
@@ -319,7 +368,7 @@ static void draw_screen(void)
         glVertex3f(0.f, imh, 0.f);
 
         glEnd();
-        glTranslatef(imw, 0.f, 0.f);
+        glTranslatef(0.f, imh + 20, 0.f);
     }
 
 	/*
