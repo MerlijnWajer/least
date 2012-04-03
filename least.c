@@ -5,14 +5,15 @@
 #include "mupdf/fitz/fitz.h"
 #include "mupdf/pdf/mupdf.h"
 
-static float w = 1366.0f;
-static float h = 768.0f;
+static float w = 800.0f;
+static float h = 600.0f;
 float imw, imh;
 GLuint *pages;
 unsigned int pagec;
 
 static int pixmap_to_texture(void *pixmap, int width, int height, int format, int type);
 static int page_to_texture(fz_context *ctx, fz_document *doc, int pagenum);
+static void draw_screen(void);
 
 float scroll = 0.0f;
 
@@ -188,7 +189,9 @@ static void handle_key_down(SDL_keysym * keysym)
 }
 
 static void handle_resize(SDL_ResizeEvent e) {
-    printf("Resized to (%d, %d)\n", e.w, e.h);
+    /* printf("Resized to (%d, %d)\n", e.w, e.h); */
+    w = e.w;
+    h = e.h;
 
     return;
 }
@@ -276,6 +279,7 @@ int setup_sdl(void)
 	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
 	/* flags = SDL_OPENGL | SDL_FULLSCREEN; */
+	/* flags = SDL_OPENGL | SDL_RESIZABLE; */
 	flags = SDL_OPENGL;
 
 	if (SDL_SetVideoMode(width, height, bpp, flags) == 0) {
@@ -349,6 +353,7 @@ static void draw_screen(void)
     glTranslatef(0.f, scroll, 0.f);
 
     for(i = 0; i < pagec; i++) {
+        printf("Page: %d, size: (%f, %f)\n", i, imw, imh);
         glBindTexture(GL_TEXTURE_2D, pages[i]);
         /* Send our triangle data to the pipeline. */
         glBegin(GL_QUADS);
@@ -370,11 +375,14 @@ static void draw_screen(void)
         glVertex3f(0.f, imh, 0.f);
 
         glEnd();
+        /*
         if (i % 2 == 0)
             glTranslatef(imw + 20, 0.f, 0.f);
         else {
             glTranslatef(-imw -20, imh + 20, 0.f);
         }
+        */
+        glTranslatef(0.0f, imh + 20, 0.f);
     }
 
 	/*
@@ -392,6 +400,7 @@ static void draw_screen(void)
 
 int main (int argc, char **argv) {
     fz_context *context;
+    int t, fc;
 
     context = fz_new_context(NULL, NULL, FZ_STORE_DEFAULT);
     if (!context)
@@ -405,7 +414,7 @@ int main (int argc, char **argv) {
          * At this point, we should have a properly setup
          * double-buffered window for use with OpenGL.
          */
-        setup_opengl(imw, imh);
+        setup_opengl(w, h);
 
         /* Load textures from PDF file */
         open_pdf(context, argv[1]);
@@ -414,11 +423,18 @@ int main (int argc, char **argv) {
          * Now we want to begin our normal app process--
          * an event loop with a lot of redrawing.
          */
+
         while (1) {
+            if (SDL_GetTicks() - t > 1000) {
+                /* printf("Drew %d FPS in 1 second\n", fc); */
+                t = SDL_GetTicks();
+                fc = 0;
+            }
             /* Process incoming events. */
             process_events();
             /* Draw the screen. */
             draw_screen();
+            fc++;
         }
 
     }
