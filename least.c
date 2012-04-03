@@ -7,8 +7,10 @@
 
 #include <unistd.h>
 
-static float w;
-static float h;
+static float
+    w, h,           /* Window dimensions globals */
+    gl_w, gl_h;     /* GL Backbuffer dimensions globals */
+
 float imw, imh;
 GLuint *pages;
 unsigned int pagec;
@@ -322,8 +324,12 @@ int setup_sdl(void)
 		fprintf(stderr, "Video query failed: %s\n", SDL_GetError());
 		quit_tutorial(1);
 	}
-    w = info->current_w;
-    h = info->current_h;
+
+    /* Store current width and height, and more importantly
+     * store GL backbuffer size
+     */
+    gl_w = w = info->current_w;
+    gl_h = h = info->current_h;
     printf("W, H: (%f, %f)\n", w, h);
 
 	/*
@@ -443,12 +449,13 @@ static void draw_screen(void)
         glScalef(ww / (float)pow2_ww, hh / (float)pow2_hh, 1.0f);
     }
 
-	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-	glViewport(0, 0, (int)w, (int)h);
+	glClearColor(0.5f, 0.5f, 0.5f, 0.0f);
+	glViewport(0, 0, (int)w, (int)gl_h);
+    /* glViewport(0, 0, 400, 400); */
 	glClear(GL_COLOR_BUFFER_BIT);
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
-	glOrtho(0.0f, (int)w, (int)h, 0.0f, -1.0f, 1.0f);
+	glOrtho(0.0f, (int)w, (int)gl_h, 0, -1.0f, 1.0f);
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
 
@@ -456,11 +463,13 @@ static void draw_screen(void)
     vloot += 0.1;
     glRotatef(vloot, 0.f, 0.f, 1.0f);
     */
-    glTranslatef(0.f, scroll, 0.f);
 
     /* Compute pageview dimensions */
     vw = w;
     vh = (vw / ww) * hh;
+
+    /* Scale based scroll */
+    glTranslatef(0.f, scroll * (vh / imh) , 0.f);
 
     for(i = 0; i < pagec; i++) {
         /* printf("Page: %d, size: (%f, %f)\n", i, imw, imh); */
