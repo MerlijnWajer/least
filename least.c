@@ -16,6 +16,7 @@ static int page_to_texture(fz_context *ctx, fz_document *doc, int pagenum);
 static void draw_screen(void);
 
 float scroll = 0.0f;
+int resize = 0;
 
 int open_pdf(fz_context *context, char *filename) {
     fz_stream *file;
@@ -69,21 +70,23 @@ static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
     fz_rect bounds;
     fz_bbox bbox;
     fz_matrix ctm;
-    int res;
+    float scale;
 
-    res = 72.0f * 1.0;
-
-    ctm = fz_scale(res / 72.0f, res / 72.0f);
-    res = (int)(72 * 1.0f);
-    ctm = fz_identity;
 
 
     printf("Rendering page %d\n", pagenum);
     page = fz_load_page(doc, pagenum);
 
     bounds = fz_bound_page(doc, page);
-    bounds.x1 *= res / 72.0f;
-    bounds.y1 *= res / 72.0f;
+
+    scale = w / bounds.x1;
+    printf("W, H: (%f, %f)\n", w, h);
+    printf("Scale: %f\n", scale);
+
+    ctm = fz_scale(scale, scale);
+
+    bounds.x1 *= scale;
+    bounds.y1 *= scale;
     bbox = fz_round_rect(bounds);
     printf("Size: (%d, %d)\n", bbox.x1, bbox.y1);
 
@@ -116,13 +119,6 @@ static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
     return pages[pagenum];
 }
 
-/*
-static int reload_texture(fz_context *context, fz_document *doc, int pagenum) {
-
-
-    return pages[pagenum];
-}
-*/
 
 static int pixmap_to_texture(void *pixmap, int width, int height, int format, int type)
 {
@@ -192,6 +188,10 @@ static void handle_resize(SDL_ResizeEvent e) {
     /* printf("Resized to (%d, %d)\n", e.w, e.h); */
     w = e.w;
     h = e.h;
+	SDL_SetVideoMode(w, h, 32, SDL_OPENGL | SDL_RESIZABLE | SDL_DOUBLEBUF);
+
+    resize = 1;
+
 
     return;
 }
@@ -279,8 +279,8 @@ int setup_sdl(void)
 	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
 	/* flags = SDL_OPENGL | SDL_FULLSCREEN; */
-	/* flags = SDL_OPENGL | SDL_RESIZABLE; */
-	flags = SDL_OPENGL;
+	flags = SDL_OPENGL | SDL_RESIZABLE | SDL_DOUBLEBUF;
+	/* flags = SDL_OPENGL; */
 
 	if (SDL_SetVideoMode(width, height, bpp, flags) == 0) {
 		/* 
@@ -334,7 +334,11 @@ static void process_events(void)
 static void draw_screen(void)
 {
     unsigned int i;
+    int ww, hh;
     /* static float vloot = 0.f; */
+
+    ww = imw;
+    hh = imh;
 
 	glEnable(GL_TEXTURE_2D);
 	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
@@ -353,7 +357,7 @@ static void draw_screen(void)
     glTranslatef(0.f, scroll, 0.f);
 
     for(i = 0; i < pagec; i++) {
-        printf("Page: %d, size: (%f, %f)\n", i, imw, imh);
+        /* printf("Page: %d, size: (%f, %f)\n", i, imw, imh); */
         glBindTexture(GL_TEXTURE_2D, pages[i]);
         /* Send our triangle data to the pipeline. */
         glBegin(GL_QUADS);
@@ -364,15 +368,15 @@ static void draw_screen(void)
 
         /* Bottom-right vertex (corner) */
         glTexCoord2i(1, 0);
-        glVertex3f(imw, 0.f, 0.f);
+        glVertex3f(ww, 0.f, 0.f);
 
         /* Top-right vertex (corner) */
         glTexCoord2i(1, 1);
-        glVertex3f(imw, imh, 0.f);
+        glVertex3f(ww, hh, 0.f);
 
         /* Top-left vertex (corner) */
         glTexCoord2i(0, 1);
-        glVertex3f(0.f, imh, 0.f);
+        glVertex3f(0.f, hh, 0.f);
 
         glEnd();
         /*
@@ -432,6 +436,14 @@ int main (int argc, char **argv) {
             }
             /* Process incoming events. */
             process_events();
+
+            if (resize) {
+
+                glDeleteTextures(pagec, pages);
+                open_pdf(context, argv[1]);
+                resize = 0;
+            }
+
             /* Draw the screen. */
             draw_screen();
             fc++;
