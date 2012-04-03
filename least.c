@@ -7,8 +7,8 @@
 
 #include <unistd.h>
 
-static float w = 1920.0f;
-static float h = 1080.0f;
+static float w = 1024.0f;
+static float h = 768.0f;
 float imw, imh;
 GLuint *pages;
 unsigned int pagec;
@@ -17,8 +17,14 @@ static int pixmap_to_texture(void *pixmap, int width, int height, int format, in
 static int page_to_texture(fz_context *ctx, fz_document *doc, int pagenum);
 static void draw_screen(void);
 
-float scroll = 0.0f;
-int redraw = 1;
+static float scroll = 0.0f;
+static int redraw = 1;
+
+/* Set to 1 if the machine does not support NPOT textures */
+static int power_of_two = 0;
+
+/* Set to 1 to force use of POT mechanism */
+static const int force_power_of_two = 0;
 
 int open_pdf(fz_context *context, char *filename) {
     fz_stream *file;
@@ -74,8 +80,6 @@ static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
     fz_matrix ctm;
     float scale;
 
-
-
     printf("Rendering page %d\n", pagenum);
     page = fz_load_page(doc, pagenum);
 
@@ -97,6 +101,10 @@ static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
 
     fz_clear_pixmap_with_value(context, image, 255);
     fz_run_page(doc, page, dev, ctm, NULL);
+
+/*
+    fz_write_png(context, image, "hoi.png", 0);
+*/
 
     /* Draw onto pixmap here */
     pages[pagenum] = pixmap_to_texture((void*)fz_pixmap_samples(context, image),
@@ -121,30 +129,95 @@ static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
     return pages[pagenum];
 }
 
+#if 0
+#define DEBUG_GL(STR) \
+    printf("OpenGL error " #STR ": %s\n", gluErrorString(glGetError()))
+#else
+#define DEBUG_GL(STR)
+#endif
+
+/* Get next power of 2 */
+#define NPOW2(D, S) \
+    { \
+        D = S; \
+        D |= D >> 1; \
+        D |= D >> 2; \
+        D |= D >> 4; \
+        D |= D >> 8; \
+        D |= D >> 16; \
+        D++; \
+    }
+
+/* Round up to power of 2 */
+#define RPOW2(D, S) \
+    { \
+        NPOW2(D, S); \
+        D = D == S << 1 ? S : D; \
+    }
 
 static int pixmap_to_texture(void *pixmap, int width, int height, int format, int type)
 {
     unsigned int texname;
+    /* int max_texsize; */
+
+    int pow2_width, pow2_height;
+
+    /* Compute POT texture dimensions */
+    RPOW2(pow2_width, width);
+    RPOW2(pow2_height, height);
 
     format = 42;
     type = 31337;
 
     glGenTextures(1, &texname);
+    printf("Generated texture: %d\n", texname);
+    DEBUG_GL(glGenTextures);
 
     /* Bind the texture object */
     glBindTexture(GL_TEXTURE_2D, texname);
+    DEBUG_GL(glBindTexture);
 
     /* Set the texture's stretching properties */
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
             GL_LINEAR);
+    DEBUG_GL(glTexParameteri);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
             GL_LINEAR);
+    DEBUG_GL(glTexParameteri);
 
     /* Edit the texture object's image data using the information SDL_Surface gives us */
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width,
-             height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-             pixmap);
+    /*
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_texsize);
+    printf("Max tex dimensions: %dx%d\n", max_texsize, max_texsize);
+    printf("width: %d, heigth %d\n", width, height);
+    */
 
+    /* Special treatment is only needed if the GPU does not support NPOT
+     * textures and the current pixmap is not of POT dimensions.
+     */
+    if (power_of_two && (pow2_width != width || pow2_height != height)) {
+        /*printf("pow2_width: %d, pow2_heigth %d\n", pow2_width, pow2_height); */
+
+        /* Allocate undefined POT texture */
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, pow2_width,
+                 pow2_height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 NULL);
+        DEBUG_GL(glTexImage2D);
+
+        /* Now fill texture */
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
+            GL_RGBA, GL_UNSIGNED_BYTE, pixmap);
+        DEBUG_GL(glTexSubImage2D);
+
+    } else {
+        /* NPOT, simply pass pixmap */
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width,
+                 height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 pixmap);
+        DEBUG_GL(glTexImage2D);
+    }
+
+    /* XXX: This function currently sets the global page size */
     imw = width;
     imh = height;
 
@@ -300,7 +373,9 @@ int setup_sdl(void)
 	}
 
 
+    /*
 	SDL_SetVideoMode(width, height, bpp, flags);
+    */
 
 	/*
 	 * EXERCISE:
@@ -342,12 +417,24 @@ static void draw_screen(void)
 {
     unsigned int i;
     int ww, hh;
+    int pow2_ww, pow2_hh;
     /* static float vloot = 0.f; */
 
     ww = imw;
     hh = imh;
 
 	glEnable(GL_TEXTURE_2D);
+
+    glMatrixMode(GL_TEXTURE);
+    glLoadIdentity();
+
+    /* Setup texture matrix to certain scale whenever pow2 is required */
+    if (power_of_two) {
+        RPOW2(pow2_ww, ww);
+        RPOW2(pow2_hh, hh);
+        glScalef(ww / (float)pow2_ww, hh / (float)pow2_hh, 1.0f);
+    }
+
 	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
 	glViewport(0, 0, (int)w, (int)h);
 	glClear(GL_COLOR_BUFFER_BIT);
@@ -365,7 +452,11 @@ static void draw_screen(void)
 
     for(i = 0; i < pagec; i++) {
         /* printf("Page: %d, size: (%f, %f)\n", i, imw, imh); */
+        glColor3f(1.0, 1.0, 1.0);
+
+        /* printf("Binding texture: %d\n", pages[i]); */
         glBindTexture(GL_TEXTURE_2D, pages[i]);
+        /* printf("OpenGL error: %s\n", gluErrorString(glGetError())); */
         /* Send our triangle data to the pipeline. */
         glBegin(GL_QUADS);
 
@@ -426,6 +517,19 @@ int main (int argc, char **argv) {
          */
         setup_opengl(w, h);
 
+        /* Check for non-power-of-two support */
+        /* printf("Extensions are: %s\n", glGetString(GL_EXTENSIONS)); */
+        if (strstr((const char *)glGetString(GL_EXTENSIONS),
+            "GL_ARB_texture_non_power_of_two")) {
+            puts("Machine supports NPOT textures.");
+            power_of_two = 0;
+        } else {
+            puts("Machine supports POT textures only.");
+            power_of_two = 1;
+        }
+
+        power_of_two |= force_power_of_two;
+
         /* Load textures from PDF file */
         open_pdf(context, argv[1]);
 
@@ -436,13 +540,14 @@ int main (int argc, char **argv) {
 
         while (1) {
             /* Process incoming events. */
-            usleep(10);
+            /* usleep(10); */
             process_events();
 
             if (redraw) {
-
+                /*
                 glDeleteTextures(pagec, pages);
                 open_pdf(context, argv[1]);
+                */
                 redraw = 0;
                 draw_screen();
             }
