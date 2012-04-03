@@ -396,23 +396,25 @@ static void process_events(void)
 	/* Our SDL event placeholder. */
 	SDL_Event event;
 
-	/* Grab all the events off the queue. */
-	while (SDL_PollEvent(&event)) {
+	/* Grab next event off the queue or wait. */
+	SDL_WaitEvent(&event);
 
-		switch (event.type) {
-		case SDL_KEYDOWN:
-			/* Handle key presses. */
-			handle_key_down(&event.key.keysym);
-			break;
-		case SDL_QUIT:
-			/* Handle quit requests (like Ctrl-c). */
-			quit_tutorial(0);
-			break;
-        case SDL_VIDEORESIZE:
-            handle_resize(event.resize);
-		}
-
-	}
+    switch (event.type) {
+    case SDL_KEYDOWN:
+        /* Handle key presses. */
+        handle_key_down(&event.key.keysym);
+        break;
+    case SDL_QUIT:
+        /* Handle quit requests (like Ctrl-c). */
+        quit_tutorial(0);
+        break;
+    case SDL_VIDEORESIZE:
+        handle_resize(event.resize);
+        break;
+    case SDL_VIDEOEXPOSE:
+        redraw = 1;
+        break;
+    }
 
 }
 
@@ -543,7 +545,10 @@ int main (int argc, char **argv) {
 
         while (1) {
             /* Process incoming events. */
-            usleep(10000);
+            /*
+             * XXX: Poll is now wait.
+             */
+            /* usleep(10000); */
             process_events();
 
             if (redraw) {
