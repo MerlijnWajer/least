@@ -5,8 +5,8 @@
 #include "mupdf/fitz/fitz.h"
 #include "mupdf/pdf/mupdf.h"
 
-static float w = 1920.0f;
-static float h = 1080.0f;
+static float w = 1366.0f;
+static float h = 768.0f;
 float imw, imh;
 GLuint *pages;
 unsigned int pagec;
@@ -74,6 +74,7 @@ static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
 
     ctm = fz_scale(res / 72.0f, res / 72.0f);
     res = (int)(72 * 1.0f);
+    ctm = fz_identity;
 
 
     printf("Rendering page %d\n", pagenum);
@@ -83,6 +84,7 @@ static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
     bounds.x1 *= res / 72.0f;
     bounds.y1 *= res / 72.0f;
     bbox = fz_round_rect(bounds);
+    printf("Size: (%d, %d)\n", bbox.x1, bbox.y1);
 
     image = fz_new_pixmap_with_bbox(context, fz_device_rgb, bbox);
     dev = fz_new_draw_device(context, image);
@@ -368,7 +370,11 @@ static void draw_screen(void)
         glVertex3f(0.f, imh, 0.f);
 
         glEnd();
-        glTranslatef(0.f, imh + 20, 0.f);
+        if (i % 2 == 0)
+            glTranslatef(imw + 20, 0.f, 0.f);
+        else {
+            glTranslatef(-imw -20, imh + 20, 0.f);
+        }
     }
 
 	/*
