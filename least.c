@@ -396,7 +396,7 @@ static void process_events(void)
 	/* Our SDL event placeholder. */
 	SDL_Event event;
 
-	/* Grab next event off the queue or wait. */
+	/* Grab next event off the queue or, wait for it... */
 	SDL_WaitEvent(&event);
 
     switch (event.type) {
@@ -423,6 +423,9 @@ static void draw_screen(void)
     unsigned int i;
     int ww, hh;
     int pow2_ww, pow2_hh;
+
+    /* View dimensions of pages */
+    float vw, vh;
     /* static float vloot = 0.f; */
 
     ww = imw;
@@ -455,6 +458,10 @@ static void draw_screen(void)
     */
     glTranslatef(0.f, scroll, 0.f);
 
+    /* Compute pageview dimensions */
+    vw = w;
+    vh = (vw / ww) * hh;
+
     for(i = 0; i < pagec; i++) {
         /* printf("Page: %d, size: (%f, %f)\n", i, imw, imh); */
         glColor3f(1.0, 1.0, 1.0);
@@ -471,15 +478,15 @@ static void draw_screen(void)
 
         /* Bottom-right vertex (corner) */
         glTexCoord2i(1, 0);
-        glVertex3f(ww, 0.f, 0.f);
+        glVertex3f(vw, 0.f, 0.f);
 
         /* Top-right vertex (corner) */
         glTexCoord2i(1, 1);
-        glVertex3f(ww, hh, 0.f);
+        glVertex3f(vw, vh, 0.f);
 
         /* Top-left vertex (corner) */
         glTexCoord2i(0, 1);
-        glVertex3f(0.f, hh, 0.f);
+        glVertex3f(0.f, vh, 0.f);
 
         glEnd();
         /*
@@ -489,7 +496,7 @@ static void draw_screen(void)
             glTranslatef(-ww -20, hh + 20, 0.f);
         }
         */
-        glTranslatef(0.0f, imh + 20, 0.f);
+        glTranslatef(0.0f, vh + (vh / imh) * 20, 0.f);
     }
 
 	/*
