@@ -5,8 +5,10 @@
 #include "mupdf/fitz/fitz.h"
 #include "mupdf/pdf/mupdf.h"
 
-static float w = 800.0f;
-static float h = 600.0f;
+#include <unistd.h>
+
+static float w = 1920.0f;
+static float h = 1080.0f;
 float imw, imh;
 GLuint *pages;
 unsigned int pagec;
@@ -16,7 +18,7 @@ static int page_to_texture(fz_context *ctx, fz_document *doc, int pagenum);
 static void draw_screen(void);
 
 float scroll = 0.0f;
-int resize = 0;
+int redraw = 1;
 
 int open_pdf(fz_context *context, char *filename) {
     fz_stream *file;
@@ -165,18 +167,22 @@ static void handle_key_down(SDL_keysym * keysym)
 
     case SDLK_DOWN:
         scroll -= 42.;
+        redraw = 1;
         break;
 
     case SDLK_UP:
         scroll += 42.;
+        redraw = 1;
         break;
 
     case SDLK_PAGEDOWN:
         scroll -= imh + 20;
+        redraw = 1;
         break;
 
     case SDLK_PAGEUP:
         scroll += imh + 20;
+        redraw = 1;
         break;
 
 	default:
@@ -188,9 +194,10 @@ static void handle_resize(SDL_ResizeEvent e) {
     /* printf("Resized to (%d, %d)\n", e.w, e.h); */
     w = e.w;
     h = e.h;
-	SDL_SetVideoMode(w, h, 32, SDL_OPENGL | SDL_RESIZABLE | SDL_DOUBLEBUF);
+	/* SDL_SetVideoMode(w, h, 32, SDL_OPENGL | SDL_RESIZABLE | SDL_DOUBLEBUF);
+     */
 
-    resize = 1;
+    redraw = 1;
 
 
     return;
@@ -381,9 +388,9 @@ static void draw_screen(void)
         glEnd();
         /*
         if (i % 2 == 0)
-            glTranslatef(imw + 20, 0.f, 0.f);
+            glTranslatef(ww + 20, 0.f, 0.f);
         else {
-            glTranslatef(-imw -20, imh + 20, 0.f);
+            glTranslatef(-ww -20, hh + 20, 0.f);
         }
         */
         glTranslatef(0.0f, imh + 20, 0.f);
@@ -404,7 +411,6 @@ static void draw_screen(void)
 
 int main (int argc, char **argv) {
     fz_context *context;
-    int t, fc;
 
     context = fz_new_context(NULL, NULL, FZ_STORE_DEFAULT);
     if (!context)
@@ -429,24 +435,17 @@ int main (int argc, char **argv) {
          */
 
         while (1) {
-            if (SDL_GetTicks() - t > 1000) {
-                /* printf("Drew %d FPS in 1 second\n", fc); */
-                t = SDL_GetTicks();
-                fc = 0;
-            }
             /* Process incoming events. */
+            usleep(10);
             process_events();
 
-            if (resize) {
+            if (redraw) {
 
                 glDeleteTextures(pagec, pages);
                 open_pdf(context, argv[1]);
-                resize = 0;
+                redraw = 0;
+                draw_screen();
             }
-
-            /* Draw the screen. */
-            draw_screen();
-            fc++;
         }
 
     }
