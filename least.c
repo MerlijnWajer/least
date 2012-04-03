@@ -7,8 +7,8 @@
 
 #include <unistd.h>
 
-static float w = 1024.0f;
-static float h = 768.0f;
+static float w;
+static float h;
 float imw, imh;
 GLuint *pages;
 unsigned int pagec;
@@ -322,6 +322,9 @@ int setup_sdl(void)
 		fprintf(stderr, "Video query failed: %s\n", SDL_GetError());
 		quit_tutorial(1);
 	}
+    w = info->current_w;
+    h = info->current_h;
+    printf("W, H: (%f, %f)\n", w, h);
 
 	/*
 	 * Set our width/height to 640/480 (you would
@@ -540,7 +543,7 @@ int main (int argc, char **argv) {
 
         while (1) {
             /* Process incoming events. */
-            /* usleep(10); */
+            usleep(10000);
             process_events();
 
             if (redraw) {
