@@ -270,6 +270,7 @@ static void handle_key_down(SDL_keysym * keysym)
     case SDLK_F11:
         SDL_WM_ToggleFullScreen(surface);
         toggle_fullscreen();
+        break;
 
 	default:
 		break;
