@@ -538,11 +538,14 @@ next_event:
 
     }
 
+    /* Clear event, just in case SDL doesn't do this (TODO) */
+    memset(&event, 0, sizeof(SDL_Event));
     /* If there are more events, handle them before drawing.
      * This is required for scrolling with the mouse - without this,
      * it is pretty slow and lags. */
-    if (SDL_PollEvent(&event))
+    if (SDL_PollEvent(&event)) {
         goto next_event;
+    }
 }
 
 static void draw_screen(void)
