@@ -1,0 +1,26 @@
+Backend:
+    -   Write API for multiple graphical frontends
+    -   Text selection & searching.
+
+    -   On demand rendering / pixmap cache.
+
+Frontend:
+    -   OpenGL|ES frontend using either SDL. ( http://wiki.meego.com/SDL_Gles )
+    -   GTK 2D frontend.
+    -   Firefox plug-in using NPAPI.
+
+View modes:
+    -   Multiple pages per row.
+    -   ``Book'' mode. (two pages visible, next page chooses the two next pages)
+    -   Presentation mode. (Perhaps smooth effects)
+    -   ``Overview'' mode.
+
+
+Extra:
+    -   Auto scrolling. [DONE]
+    -   Way to set/change options (perhaps an overlay?)
+    -   Change bg colour
+
+
+NO:
+    -   Special fz_matrix'es for funky (or useful...) effects. (Just use OpenGL)
