@@ -441,7 +441,6 @@ static void process_events(void)
         quit_tutorial(0);
         break;
     case SDL_VIDEORESIZE:
-        printf("Fullscreen: %d\n", surface->flags & SDL_FULLSCREEN);
         handle_resize(event.resize);
         break;
     case SDL_VIDEOEXPOSE:
