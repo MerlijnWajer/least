@@ -23,6 +23,7 @@ static void draw_screen(void);
 static void toggle_fullscreen(void);
 
 static float scroll = 0.0f;
+static int autoscroll = 0;
 
 static int redraw = 1; /* Window dirty? */
 
@@ -260,6 +261,14 @@ static void handle_key_down(SDL_keysym * keysym)
         toggle_fullscreen();
         break;
 
+    case SDLK_F12:
+        if (autoscroll)
+            autoscroll = 0;
+        else
+            autoscroll = 1;
+        redraw = 1;
+        break;
+
 	default:
 		break;
 	}
@@ -384,7 +393,7 @@ int setup_sdl(void)
 	/* flags = SDL_OPENGL; */
     surface = SDL_SetVideoMode(w, h, bpp, flags);
 	if (!surface) {
-		/* 
+		/*
 		 * This could happen for a variety of reasons,
 		 * including DISPLAY not being set, the specified
 		 * resolution not being available, etc.
@@ -404,8 +413,27 @@ static void process_events(void)
 	/* Our SDL event placeholder. */
 	SDL_Event event;
 
-	/* Grab next event off the queue or, wait for it... */
-	SDL_WaitEvent(&event);
+    /* Only poll + sleep if we are autoscrolling or doing
+     * something else that is interactive */
+    if (autoscroll) {
+        if (!SDL_PollEvent(&event)) {
+            /* If we add a sleep, the scrolling won't be super smooth.
+             * Regardless, I think we need to find something to make sure we
+             * don't eat 100% cpu just checking for events.
+             *
+             * I found that 10ms is not a bad wait. Theoretically we want to
+             * wait 1000ms / fps (usually 60) -> 16ms.
+             * */
+            usleep(16);
+
+            if (autoscroll)
+                scroll -= 3;
+
+            redraw = 1;
+        }
+    } else {
+        SDL_WaitEvent(&event);
+    }
 
     switch (event.type) {
     case SDL_KEYDOWN:
