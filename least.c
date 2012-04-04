@@ -459,6 +459,28 @@ static void process_events(void)
     case SDL_VIDEOEXPOSE:
         redraw = 1;
         break;
+    case SDL_MOUSEBUTTONDOWN:
+        switch (event.button.button) {
+            case 1:
+                printf("Mouse button 1\n");
+                break;
+            case 2:
+                printf("Mouse button 2\n");
+                break;
+            case 3:
+                printf("Mouse button 3\n");
+                break;
+            case 4:
+                scroll += 100;
+                redraw = 1;
+                break;
+            case 5:
+                scroll -= 100;
+                redraw = 1;
+                break;
+        }
+        break;
+
     }
 
 }
