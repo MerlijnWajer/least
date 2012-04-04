@@ -433,7 +433,7 @@ static void process_events(void)
              * I found that 10ms is not a bad wait. Theoretically we want to
              * wait 1000ms / fps (usually 60) -> 16ms.
              * */
-            usleep(16);
+            usleep(16000);
 
             if (autoscroll)
                 scroll -= autoscroll_var;
