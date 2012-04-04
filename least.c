@@ -258,19 +258,11 @@ static void handle_key_down(SDL_keysym * keysym)
 		break;
 
     case SDLK_DOWN:
-        if (autoscroll) {
-            autoscroll_var += 1;
-        } else {
-            key_button_down |= LEAST_KEY_DOWN;
-        }
+        key_button_down |= LEAST_KEY_DOWN;
         break;
 
     case SDLK_UP:
-        if (autoscroll) {
-            autoscroll_var -= 1;
-        } else {
-            key_button_down |= LEAST_KEY_UP;
-        }
+        key_button_down |= LEAST_KEY_UP;
         break;
 
     case SDLK_PAGEDOWN:
@@ -516,14 +508,21 @@ static void process_events(void)
              * */
             usleep(16000);
 
-            if (autoscroll)
+            if (autoscroll) {
+                if (key_button_down & LEAST_KEY_DOWN)
+                    autoscroll_var += 1;
+
+                if (key_button_down & LEAST_KEY_UP)
+                    autoscroll_var -= 1;
+
                 scroll -= autoscroll_var;
+            } else {
+                if (key_button_down & LEAST_KEY_DOWN)
+                    scroll -= 5;
 
-            if (key_button_down & LEAST_KEY_DOWN)
-                scroll -= 5;
-
-            if (key_button_down & LEAST_KEY_UP)
-                scroll += 5;
+                if (key_button_down & LEAST_KEY_UP)
+                    scroll += 5;
+            }
 
             redraw = 1;
         }
