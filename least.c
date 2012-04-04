@@ -31,6 +31,8 @@ static int redraw = 1; /* Window dirty? */
 static int fullscreen = 0; /* Are fullscreen? */
 static int prev_w, prev_h; /* W, H before fullscreen */
 
+static int mouse_button_down = 0; /* Contains what mouse buttons are down */
+
 /* Set to 1 if the machine does not support NPOT textures */
 static int power_of_two = 0;
 
@@ -283,6 +285,69 @@ static void handle_key_down(SDL_keysym * keysym)
 	}
 }
 
+static void handle_mouse_down(SDL_MouseButtonEvent *event) {
+    switch (event->button) {
+        case 1:
+            mouse_button_down |= 1 << 1;
+            break;
+        case 2:
+            mouse_button_down |= 1 << 2;
+            break;
+        case 3:
+            mouse_button_down |= 1 << 3;
+            break;
+        case 4:
+            scroll += 100;
+            redraw = 1;
+            break;
+        case 5:
+            scroll -= 100;
+            redraw = 1;
+            break;
+    }
+
+    return;
+}
+
+static void handle_mouse_up(SDL_MouseButtonEvent *event) {
+    switch (event->button) {
+        case 1:
+            mouse_button_down &= ~(1 << 1);
+            break;
+        case 2:
+            mouse_button_down &= ~(1 << 2);
+            break;
+        case 3:
+            mouse_button_down &= ~(1 << 3);
+            break;
+        case 4:
+            scroll += 100;
+            redraw = 1;
+            break;
+        case 5:
+            scroll -= 100;
+            redraw = 1;
+            break;
+    }
+
+    return;
+}
+
+static void handle_mouse_motion(SDL_MouseMotionEvent *event) {
+    if (event->state) {
+        if (mouse_button_down & (1 << 3)) {
+            /*
+            printf("Mouse button moving and down: rel: (%d, %d)\n",
+                    event->xrel, event->yrel);
+                    */
+            scroll += event->yrel * 2;
+            redraw = 1;
+        }
+
+    }
+
+}
+
 static void toggle_fullscreen(void) {
 	const SDL_VideoInfo *info = NULL;
 	info = SDL_GetVideoInfo();
@@ -444,6 +509,8 @@ static void process_events(void)
         SDL_WaitEvent(&event);
     }
 
+next_event:
+
     switch (event.type) {
     case SDL_KEYDOWN:
         /* Handle key presses. */
@@ -460,29 +527,22 @@ static void process_events(void)
         redraw = 1;
         break;
     case SDL_MOUSEBUTTONDOWN:
-        switch (event.button.button) {
-            case 1:
-                printf("Mouse button 1\n");
-                break;
-            case 2:
-                printf("Mouse button 2\n");
-                break;
-            case 3:
-                printf("Mouse button 3\n");
-                break;
-            case 4:
-                scroll += 100;
-                redraw = 1;
-                break;
-            case 5:
-                scroll -= 100;
-                redraw = 1;
-                break;
-        }
+        handle_mouse_down(&event.button);
+        break;
+    case SDL_MOUSEBUTTONUP:
+        handle_mouse_up(&event.button);
+        break;
+    case SDL_MOUSEMOTION:
+        handle_mouse_motion(&event.motion);
         break;
 
     }
 
+    /* If there are more events, handle them before drawing.
+     * This is required for scrolling with the mouse - without this,
+     * it is pretty slow and lags. */
+    if (SDL_PollEvent(&event))
+        goto next_event;
 }
 
 static void draw_screen(void)
