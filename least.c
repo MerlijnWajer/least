@@ -33,6 +33,10 @@ static int prev_w, prev_h; /* W, H before fullscreen */
 
 static int mouse_button_down = 0; /* Contains what mouse buttons are down */
 
+#define LEAST_KEY_DOWN 1 << 1
+#define LEAST_KEY_UP 1 << 2
+static int key_button_down = 0; /* Contains what special keys are down */
+
 /* Set to 1 if the machine does not support NPOT textures */
 static int power_of_two = 0;
 
@@ -232,6 +236,20 @@ static void quit_tutorial(int code)
 	exit(code);
 }
 
+static void handle_key_up(SDL_keysym * keysym) {
+    switch (keysym->sym) {
+        case SDLK_DOWN:
+            key_button_down &= ~(LEAST_KEY_DOWN);
+            break;
+        case SDLK_UP:
+            key_button_down &= ~(LEAST_KEY_UP);
+            break;
+        default:
+            break;
+    }
+
+}
+
 static void handle_key_down(SDL_keysym * keysym)
 {
 	switch (keysym->sym) {
@@ -243,7 +261,7 @@ static void handle_key_down(SDL_keysym * keysym)
         if (autoscroll) {
             autoscroll_var += 1;
         } else {
-            scroll -= 42.;
+            key_button_down |= LEAST_KEY_DOWN;
         }
         redraw = 1;
         break;
@@ -252,7 +270,7 @@ static void handle_key_down(SDL_keysym * keysym)
         if (autoscroll) {
             autoscroll_var -= 1;
         } else {
-            scroll += 42.;
+            key_button_down |= LEAST_KEY_UP;
         }
         redraw = 1;
         break;
@@ -489,7 +507,7 @@ static void process_events(void)
 
     /* Only poll + sleep if we are autoscrolling or doing
      * something else that is interactive */
-    if ((autoscroll) && autoscroll_var) {
+    if (((autoscroll) && autoscroll_var) || key_button_down) {
         if (!SDL_PollEvent(&event)) {
             /* If we add a sleep, the scrolling won't be super smooth.
              * Regardless, I think we need to find something to make sure we
@@ -503,6 +521,12 @@ static void process_events(void)
             if (autoscroll)
                 scroll -= autoscroll_var;
 
+            if (key_button_down & LEAST_KEY_DOWN)
+                scroll -= 5;
+
+            if (key_button_down & LEAST_KEY_UP)
+                scroll += 5;
+
             redraw = 1;
         }
     } else {
@@ -515,6 +539,9 @@ next_event:
     case SDL_KEYDOWN:
         /* Handle key presses. */
         handle_key_down(&event.key.keysym);
+        break;
+    case SDL_KEYUP:
+        handle_key_up(&event.key.keysym);
         break;
     case SDL_QUIT:
         /* Handle quit requests (like Ctrl-c). */
