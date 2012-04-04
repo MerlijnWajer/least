@@ -263,7 +263,6 @@ static void handle_key_down(SDL_keysym * keysym)
         } else {
             key_button_down |= LEAST_KEY_DOWN;
         }
-        redraw = 1;
         break;
 
     case SDLK_UP:
@@ -272,7 +271,6 @@ static void handle_key_down(SDL_keysym * keysym)
         } else {
             key_button_down |= LEAST_KEY_UP;
         }
-        redraw = 1;
         break;
 
     case SDLK_PAGEDOWN:
