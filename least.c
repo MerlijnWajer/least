@@ -24,6 +24,7 @@ static void toggle_fullscreen(void);
 
 static float scroll = 0.0f;
 static int autoscroll = 0;
+static int autoscroll_var = 1;
 
 static int redraw = 1; /* Window dirty? */
 
@@ -237,12 +238,20 @@ static void handle_key_down(SDL_keysym * keysym)
 		break;
 
     case SDLK_DOWN:
-        scroll -= 42.;
+        if (autoscroll) {
+            autoscroll_var += 1;
+        } else {
+            scroll -= 42.;
+        }
         redraw = 1;
         break;
 
     case SDLK_UP:
-        scroll += 42.;
+        if (autoscroll) {
+            autoscroll_var -= 1;
+        } else {
+            scroll += 42.;
+        }
         redraw = 1;
         break;
 
@@ -415,7 +424,7 @@ static void process_events(void)
 
     /* Only poll + sleep if we are autoscrolling or doing
      * something else that is interactive */
-    if (autoscroll) {
+    if ((autoscroll) && autoscroll_var) {
         if (!SDL_PollEvent(&event)) {
             /* If we add a sleep, the scrolling won't be super smooth.
              * Regardless, I think we need to find something to make sure we
@@ -427,7 +436,7 @@ static void process_events(void)
             usleep(16);
 
             if (autoscroll)
-                scroll -= 3;
+                scroll -= autoscroll_var;
 
             redraw = 1;
         }
