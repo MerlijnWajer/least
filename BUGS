@@ -1,0 +1,2 @@
+-   Fullscreen works via F11 (our own event) only, not using window manager
+event. (At least not in awesome)

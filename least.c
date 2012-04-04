@@ -11,6 +11,8 @@ static float
     w, h,           /* Window dimensions globals */
     gl_w, gl_h;     /* GL Backbuffer dimensions globals */
 
+SDL_Surface *surface;
+
 float imw, imh;
 GLuint *pages;
 unsigned int pagec;
@@ -18,9 +20,14 @@ unsigned int pagec;
 static int pixmap_to_texture(void *pixmap, int width, int height, int format, int type);
 static int page_to_texture(fz_context *ctx, fz_document *doc, int pagenum);
 static void draw_screen(void);
+static void toggle_fullscreen(void);
 
 static float scroll = 0.0f;
-static int redraw = 1;
+
+static int redraw = 1; /* Window dirty? */
+
+static int fullscreen = 0; /* Are fullscreen? */
+static int prev_w, prev_h; /* W, H before fullscreen */
 
 /* Set to 1 if the machine does not support NPOT textures */
 static int power_of_two = 0;
@@ -260,17 +267,45 @@ static void handle_key_down(SDL_keysym * keysym)
         redraw = 1;
         break;
 
+    case SDLK_F11:
+        SDL_WM_ToggleFullScreen(surface);
+        toggle_fullscreen();
+
 	default:
 		break;
 	}
+}
+
+static void toggle_fullscreen(void) {
+	const SDL_VideoInfo *info = NULL;
+	info = SDL_GetVideoInfo();
+
+	if (!info) {
+        puts("Oops - can't get video info");
+    }
+
+    if (!fullscreen) {
+        fullscreen = 1;
+
+        prev_w = w;
+        prev_h = h;
+
+        w = info->current_w;
+        h = info->current_h;
+    } else {
+        fullscreen = 0;
+        w = prev_w;
+        h = prev_h;
+    }
+
+
+    redraw = 1;
 }
 
 static void handle_resize(SDL_ResizeEvent e) {
     /* printf("Resized to (%d, %d)\n", e.w, e.h); */
     w = e.w;
     h = e.h;
-	/* SDL_SetVideoMode(w, h, 32, SDL_OPENGL | SDL_RESIZABLE | SDL_DOUBLEBUF);
-     */
 
     redraw = 1;
 
@@ -370,8 +405,8 @@ int setup_sdl(void)
 	/* flags = SDL_OPENGL | SDL_FULLSCREEN; */
 	flags = SDL_OPENGL | SDL_RESIZABLE | SDL_DOUBLEBUF;
 	/* flags = SDL_OPENGL; */
-
-	if (SDL_SetVideoMode(width, height, bpp, flags) == 0) {
+    surface = SDL_SetVideoMode(width, height, bpp, flags);
+	if (!surface) {
 		/* 
 		 * This could happen for a variety of reasons,
 		 * including DISPLAY not being set, the specified
@@ -382,18 +417,8 @@ int setup_sdl(void)
 	}
 
 
-    /*
-	SDL_SetVideoMode(width, height, bpp, flags);
-    */
+    SDL_WM_SetCaption("least", "icon");
 
-	/*
-	 * EXERCISE:
-	 * Record timings using SDL_GetTicks() and
-	 * and print out frames per second at program
-	 * end.
-	 */
-
-	/* Never reached. */
 	return 0;
 }
 
@@ -415,6 +440,7 @@ static void process_events(void)
         quit_tutorial(0);
         break;
     case SDL_VIDEORESIZE:
+        printf("Fullscreen: %d\n", surface->flags & SDL_FULLSCREEN);
         handle_resize(event.resize);
         break;
     case SDL_VIDEOEXPOSE:
