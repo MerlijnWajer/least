@@ -16,12 +16,15 @@ static float
 
 SDL_Surface *surface;
 
-static float imw, imh;
+static float imw, imh, ims;
 
 static int pixmap_to_texture(void *pixmap, int width, int height, int format, int type);
 static int page_to_texture(fz_context *ctx, fz_document *doc, int pagenum);
 static void draw_screen(void);
 static void toggle_fullscreen(void);
+
+struct least_thread;
+static void finish_page_render(struct least_thread *render);
 
 static float scroll = 0.0f;
 static int autoscroll = 0;
@@ -53,13 +56,17 @@ static fz_document *doc;
 
 struct least_page_info {
     int w, h, sw, sh;
-    int rendering;
+    int rendering; /* Set to 1 if a thread is processing this page */
     GLuint texture;
 };
 
 /* PDF page info */
 static unsigned int pagec;
 static struct least_page_info *pages;
+
+/* Cache settings */
+static const int pages_to_cache = 5;
+static int page_focus = 0;
 
 /* Cache busy texture */
 static GLuint busy_texture;
@@ -90,7 +97,8 @@ struct least_thread {
 };
 
 static struct least_thread *threads;
-
+static struct least_thread **idle_threads;
+static int idle_thread_count;
 
 /* Fitz lock support */
 static pthread_mutex_t least_lock_list[FZ_LOCK_MAX];
@@ -195,7 +203,7 @@ int open_pdf(fz_context *context, char *filename) {
     #endif
 
     for(i = 0; i < pagec; i++) {
-        pages[i].rendering = 1;
+        pages[i].rendering = 0;
         pages[i].texture = 0;
         /* page_to_texture(context, doc, i); */
     }
@@ -219,7 +227,7 @@ static fz_pixmap *page_to_pixmap(fz_context *context, fz_document *doc, int page
 
     bounds = fz_bound_page(doc, page);
 
-    scale = w / bounds.x1;
+    ims = scale = w / bounds.x1;
     printf("W, H: (%f, %f)\n", w, h);
     printf("Scale: %f\n", scale);
 
@@ -742,6 +750,15 @@ next_event:
         handle_mouse_motion(&event.motion);
         break;
 
+    /* A thread completed its rendering
+     *
+     * The thread structure of the completed job is contained
+     * within the data1 pointer of the event.
+     */
+    case LEAST_PAGE_COMPLETE:
+        finish_page_render((struct least_thread*)event.user.data1);
+        break;
+
     }
 
     /* Clear event, just in case SDL doesn't do this (TODO) */
@@ -776,6 +793,8 @@ static void *render_thread(void *t)
     pthread_cond_wait(&self->cond, &self->mutex);
 
     while (self->keep_running) {
+
+        printf("Thread %d: Rendering page %d\n", self->id, self->pagenum);
 
         /* Render a page */
         self->pixmap = page_to_pixmap(self->context, doc, self->pagenum);
@@ -948,6 +967,7 @@ static void init_threads(int thread_count, fz_context *context) {
     int err;
 
     threads = malloc(sizeof(struct least_thread) * thread_count);
+    idle_threads = malloc(sizeof(struct least_thread*) * thread_count);
 
     for (i = 0; i < thread_count; i++) {
         /* Setup sync */
@@ -969,7 +989,10 @@ static void init_threads(int thread_count, fz_context *context) {
             abort();
         }
 
+        idle_threads[thread_count - i - 1] = threads + i;
     }
+
+    idle_thread_count = thread_count;
 
 }
 
@@ -986,6 +1009,111 @@ static void init_least_context_locks(void)
             abort();
         }
     }
+
+    return;
+}
+
+static void schedule_page(int pagenum)
+{
+    struct least_thread *t = idle_threads[--idle_thread_count];
+
+    /* Mark page in progress */
+    pages[pagenum].rendering = 1;
+
+    /* Configure thread */
+    t->pagenum = pagenum;
+    t->scale = ims;
+
+    /* Start rendering */
+    pthread_mutex_lock(&t->mutex);
+    pthread_cond_signal(&t->cond);
+    pthread_mutex_unlock(&t->mutex);
+
+    return;
+}
+
+/* This function updates cache state if necessary
+ *
+ * It schedules render jobs en removes pages no longer
+ * needed.
+ */
+void update_cache(void)
+{
+    int i;
+    int
+        c_start,
+        c_stop;
+    int kills_left = idle_thread_count;
+
+    /* Compute sliding cache window */
+    c_start = page_focus - (pages_to_cache - 1) / 2;
+    if (c_start < 0)
+        c_start = 0;
+
+    c_stop = c_start + pages_to_cache;
+    if (c_stop > (int)pagec)
+        c_stop = pagec;
+
+#if 1
+    printf("Current cache window: [%d, %d)\n", c_start, c_stop);
+    printf("Idle thread count: %d\n", idle_thread_count);
+#endif
+
+    /* First kill unnecessary pages in cache */
+    for (i = 0; i < c_start && kills_left; i++) {
+        if (pages[i].texture) {
+            printf("cache: Killing page %d\n", i);
+            glDeleteTextures(1, &pages[i].texture);
+            pages[i].texture = 0;
+            kills_left--;
+        }
+    }
+
+    for (i = c_stop; i < (int)pagec && kills_left; i++) {
+        if (pages[i].texture) {
+            printf("cache: Killing page %d\n", i);
+            glDeleteTextures(1, &pages[i].texture);
+            pages[i].texture = 0;
+            kills_left--;
+        }
+    }
+
+    /* Schedule new pages */
+    for (i = c_start; i < c_stop && idle_thread_count; i++) {
+        if (!pages[i].texture && !pages[i].rendering) {
+            printf("cache: Scheduling page %d\n", i);
+            schedule_page(i);
+        }
+    }
+}
+
+/* This function completes a rendering job.
+ *
+ * The thread is added to the pool of idle threads.
+ */
+static void finish_page_render(struct least_thread *render)
+{
+    union _dispose_volatile {
+        volatile fz_pixmap *volatile_pixmap;
+        fz_pixmap *pixmap;
+    } d;
+
+    d.volatile_pixmap = render->pixmap;
+
+    /* Page is complete and no longer rendering */
+    pages[render->pagenum].rendering = 0;
+
+    /* XXX Error handling ? */
+    pages[render->pagenum].texture = pixmap_to_texture(
+        (void*)fz_pixmap_samples(render->context, d.pixmap),
+        fz_pixmap_width(render->context, d.pixmap),
+        fz_pixmap_height(render->context, d.pixmap), 0, 0);
+
+    /* XXX Using the threads context might not be a gr8 idea */
+    fz_drop_pixmap(render->context, d.pixmap);
+
+    /* Place thread into idle pool */
+    idle_threads[idle_thread_count++] = render;
 }
 
 int main (int argc, char **argv) {
@@ -1043,6 +1171,9 @@ int main (int argc, char **argv) {
         while (1) {
             /* Process incoming events. */
             process_events();
+
+            /* Update cache state */
+            update_cache();
 
             if (redraw) {
                 /*
