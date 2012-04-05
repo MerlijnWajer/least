@@ -6,6 +6,7 @@
 #include "mupdf/pdf/mupdf.h"
 
 #include <unistd.h>
+#include <math.h>
 
 static float
     w, h,           /* Window dimensions globals */
@@ -43,9 +44,66 @@ static int power_of_two = 0;
 /* Set to 1 to force use of POT mechanism */
 static const int force_power_of_two = 0;
 
+
+/* Global PDF document */
+fz_document *doc;
+
+struct least_page_info {
+    int w, h, sw, sh;
+    int rendering;
+    GLuint texture;
+};
+
+struct least_page_info* pinfo;
+
+int inrange(float s, float e, float p) {
+    float ss, ee;
+    /* I know, right */
+    if (s > e) {
+        ss = e;
+        ee = s;
+    }
+    else {
+        ss = s;
+        ee = e;
+    }
+
+    return p > ss && p < ee;
+}
+
+int visible_pages(int * pageinfo) {
+    unsigned int i, a;
+    float f, pf, s, e, scale;
+    f = pf = 0;
+    s = e = 0;
+    pageinfo = NULL;
+    a = 0;
+
+    for(i = 0; i < pagec; i++) {
+        scale = (((float)pinfo[i].sw / pinfo[i].w) * pinfo[i].w) / w;
+
+        pf = f;
+        f -= pinfo[i].sh;
+
+        s = scroll;
+        e = scroll - h * scale;
+
+        if (
+            inrange(s, e, pf) ||
+            inrange(s, e, f)  ||
+            inrange(pf, f, s) ||
+            inrange(pf, f, e)
+        ) {
+            pageinfo = realloc(pageinfo, sizeof(int) * ++a);
+            pageinfo[a - 1] = i;
+        }
+    }
+
+    return a;
+}
+
 int open_pdf(fz_context *context, char *filename) {
     fz_stream *file;
-    fz_document *doc;
     int faulty;
     unsigned int i;
     /* char * s; */
@@ -75,14 +133,17 @@ int open_pdf(fz_context *context, char *filename) {
     /* XXX error handling */
     pagec = fz_count_pages(doc);
     pages = malloc(sizeof(unsigned int) * pagec);
+    pinfo = malloc(sizeof(struct least_page_info) * pagec);
+
+    #if 0
+    return 0;
+    #endif
 
     for(i = 0; i < pagec; i++) {
+        pinfo[i].rendering = 1;
+        pinfo[i].texture = 0;
         page_to_texture(context, doc, i);
     }
-
-
-    fz_close_document(doc);
-
 
     printf("Done opening\n");
     return 0;
@@ -108,10 +169,18 @@ static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
 
     ctm = fz_scale(scale, scale);
 
+    pinfo[pagenum].w = bounds.x1;
+    pinfo[pagenum].h = bounds.y1;
+
     bounds.x1 *= scale;
     bounds.y1 *= scale;
+
+    pinfo[pagenum].sw = bounds.x1;
+    pinfo[pagenum].sh = bounds.y1;
+
     bbox = fz_round_rect(bounds);
     printf("Size: (%d, %d)\n", bbox.x1, bbox.y1);
+
 
     image = fz_new_pixmap_with_bbox(context, fz_device_rgb, bbox);
     dev = fz_new_draw_device(context, image);
@@ -671,10 +740,13 @@ static void draw_screen(void)
 
 int main (int argc, char **argv) {
     fz_context *context;
+    int *pageinfo = NULL;
+    int i;
 
     context = fz_new_context(NULL, NULL, FZ_STORE_DEFAULT);
     if (!context)
         fprintf(stderr, "Failed to create context\n");
+
 
     if (argc == 2) {
         /* Initialize OpenGL window */
@@ -719,11 +791,21 @@ int main (int argc, char **argv) {
                 redraw = 0;
                 draw_screen();
             }
+
+            pageinfo = NULL;
+            for(i = 0; i < visible_pages(pageinfo); i++) {
+                printf("%d, ", i);
+            }
+            printf("\n");
+
+            free(pageinfo);
         }
+
 
     }
 
 
+    fz_close_document(doc);
     fz_free_context(context);
 
     return 0;
