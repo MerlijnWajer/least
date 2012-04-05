@@ -5,6 +5,8 @@
 #include "mupdf/fitz/fitz.h"
 #include "mupdf/pdf/mupdf.h"
 
+#include <sys/types.h>
+#include <pthread.h>
 #include <unistd.h>
 #include <math.h>
 
@@ -14,9 +16,7 @@ static float
 
 SDL_Surface *surface;
 
-float imw, imh;
-GLuint *pages;
-unsigned int pagec;
+static float imw, imh;
 
 static int pixmap_to_texture(void *pixmap, int width, int height, int format, int type);
 static int page_to_texture(fz_context *ctx, fz_document *doc, int pagenum);
@@ -44,9 +44,12 @@ static int power_of_two = 0;
 /* Set to 1 to force use of POT mechanism */
 static const int force_power_of_two = 0;
 
+/* Set to non-zero value to force render threads to specific number */
+static const int force_thread_count = 0;
+static int thread_count = 0;
 
 /* Global PDF document */
-fz_document *doc;
+static fz_document *doc;
 
 struct least_page_info {
     int w, h, sw, sh;
@@ -54,16 +57,69 @@ struct least_page_info {
     GLuint texture;
 };
 
-struct least_page_info* pinfo;
+/* PDF page info */
+static unsigned int pagec;
+static struct least_page_info *pages;
 
+/* Cache busy texture */
+static GLuint busy_texture;
+
+/* Least page render complete event */
+#define LEAST_PAGE_COMPLETE (SDL_USEREVENT + 1)
+
+/* Every thread is tracked by this structure */
+struct least_thread {
+    /* Communication synchronisation */
+    pthread_cond_t cond;
+    pthread_mutex_t mutex;
+
+    /* Thread ID */
+    pthread_t tid;
+    int id;
+
+    /* Fitz context (cloned upon thread entry) */
+    fz_context *context;
+
+    /* Action specification */
+    volatile int keep_running;
+    volatile int pagenum;
+    volatile float scale;
+
+    /* Action results */
+    volatile fz_pixmap *pixmap;
+};
+
+static struct least_thread *threads;
+
+
+/* Fitz lock support */
+static pthread_mutex_t least_lock_list[FZ_LOCK_MAX];
+
+static void least_lock(void *user, int lock) {
+    pthread_mutex_t *m = user;
+    pthread_mutex_lock(&m[lock]);
+}
+
+static void least_unlock(void *user, int lock) {
+    pthread_mutex_t *m = user;
+    pthread_mutex_unlock(&m[lock]);
+}
+
+static struct fz_locks_context_s least_context_locks = {
+    least_lock_list,
+    least_lock,
+    least_unlock
+};
+
+
+/* Page visibility */
 int inrange(float s, float e, float p) {
     float ss, ee;
     /* I know, right */
     if (s > e) {
         ss = e;
         ee = s;
-    }
-    else {
+    } else {
         ss = s;
         ee = e;
     }
@@ -80,10 +136,10 @@ int visible_pages(int * pageinfo) {
     a = 0;
 
     for(i = 0; i < pagec; i++) {
-        scale = (((float)pinfo[i].sw / pinfo[i].w) * pinfo[i].w) / w;
+        scale = (((float)pages[i].sw / pages[i].w) * pages[i].w) / w;
 
         pf = f;
-        f -= pinfo[i].sh;
+        f -= pages[i].sh;
 
         s = scroll;
         e = scroll - h * scale;
@@ -130,23 +186,69 @@ int open_pdf(fz_context *context, char *filename) {
     if (faulty)
         return faulty;
 
-    /* XXX error handling */
+    /* XXX need error handling */
     pagec = fz_count_pages(doc);
-    pages = malloc(sizeof(unsigned int) * pagec);
-    pinfo = malloc(sizeof(struct least_page_info) * pagec);
+    pages = malloc(sizeof(struct least_page_info) * pagec);
 
     #if 0
     return 0;
     #endif
 
     for(i = 0; i < pagec; i++) {
-        pinfo[i].rendering = 1;
-        pinfo[i].texture = 0;
-        page_to_texture(context, doc, i);
+        pages[i].rendering = 1;
+        pages[i].texture = 0;
+        /* page_to_texture(context, doc, i); */
     }
+    page_to_texture(context, doc, 0);
 
     printf("Done opening\n");
     return 0;
+}
+
+static fz_pixmap *page_to_pixmap(fz_context *context, fz_document *doc, int pagenum) {
+    fz_page *page;
+    fz_pixmap *image;
+    fz_device *dev;
+    fz_rect bounds;
+    fz_bbox bbox;
+    fz_matrix ctm;
+    float scale;
+
+    printf("Rendering page %d\n", pagenum);
+    page = fz_load_page(doc, pagenum);
+
+    bounds = fz_bound_page(doc, page);
+
+    scale = w / bounds.x1;
+    printf("W, H: (%f, %f)\n", w, h);
+    printf("Scale: %f\n", scale);
+
+    ctm = fz_scale(scale, scale);
+
+    pages[pagenum].w = bounds.x1;
+    pages[pagenum].h = bounds.y1;
+
+    bounds.x1 *= scale;
+    bounds.y1 *= scale;
+
+    pages[pagenum].sw = bounds.x1;
+    pages[pagenum].sh = bounds.y1;
+
+    bbox = fz_round_rect(bounds);
+    printf("Size: (%d, %d)\n", bbox.x1, bbox.y1);
+
+
+    image = fz_new_pixmap_with_bbox(context, fz_device_rgb, bbox);
+    dev = fz_new_draw_device(context, image);
+
+    fz_clear_pixmap_with_value(context, image, 255);
+    fz_run_page(doc, page, dev, ctm, NULL);
+
+    fz_free_device(dev);
+
+    fz_free_page(doc, page);
+
+    return image;
 }
 
 static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
@@ -169,14 +271,14 @@ static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
 
     ctm = fz_scale(scale, scale);
 
-    pinfo[pagenum].w = bounds.x1;
-    pinfo[pagenum].h = bounds.y1;
+    pages[pagenum].w = bounds.x1;
+    pages[pagenum].h = bounds.y1;
 
     bounds.x1 *= scale;
     bounds.y1 *= scale;
 
-    pinfo[pagenum].sw = bounds.x1;
-    pinfo[pagenum].sh = bounds.y1;
+    pages[pagenum].sw = bounds.x1;
+    pages[pagenum].sh = bounds.y1;
 
     bbox = fz_round_rect(bounds);
     printf("Size: (%d, %d)\n", bbox.x1, bbox.y1);
@@ -189,7 +291,7 @@ static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
     fz_run_page(doc, page, dev, ctm, NULL);
 
     /* Draw onto pixmap here */
-    pages[pagenum] = pixmap_to_texture((void*)fz_pixmap_samples(context, image),
+    pages[pagenum].texture = pixmap_to_texture((void*)fz_pixmap_samples(context, image),
             fz_pixmap_width(context, image),
             fz_pixmap_height(context, image), 0, 0);
 
@@ -200,10 +302,11 @@ static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
 
     fz_free_page(doc, page);
 
-    return pages[pagenum];
+    return pages[pagenum].texture;
 }
 
-#if 0
+
+#if 1
 #define DEBUG_GL(STR) \
     printf("OpenGL error " #STR ": %s\n", gluErrorString(glGetError()))
 #else
@@ -300,7 +403,10 @@ static int pixmap_to_texture(void *pixmap, int width, int height, int format, in
 
 static void quit_tutorial(int code)
 {
-	glDeleteTextures(pagec, pages);
+    unsigned int i;
+
+    for (i = 0; i < pagec; i++)
+        glDeleteTextures(1, &pages[i].texture);
 
 	exit(code);
 }
@@ -606,25 +712,32 @@ next_event:
         /* Handle key presses. */
         handle_key_down(&event.key.keysym);
         break;
+
     case SDL_KEYUP:
         handle_key_up(&event.key.keysym);
         break;
+
     case SDL_QUIT:
         /* Handle quit requests (like Ctrl-c). */
         quit_tutorial(0);
         break;
+
     case SDL_VIDEORESIZE:
         handle_resize(event.resize);
         break;
+
     case SDL_VIDEOEXPOSE:
         redraw = 1;
         break;
+
     case SDL_MOUSEBUTTONDOWN:
         handle_mouse_down(&event.button);
         break;
+
     case SDL_MOUSEBUTTONUP:
         handle_mouse_up(&event.button);
         break;
+
     case SDL_MOUSEMOTION:
         handle_mouse_motion(&event.motion);
         break;
@@ -641,11 +754,57 @@ next_event:
     }
 }
 
+/* Render thread entry */
+static void *render_thread(void *t)
+{
+    SDL_Event my_event;
+    struct least_thread *self = t;
+
+    my_event.type = LEAST_PAGE_COMPLETE;
+    my_event.user.data1 = t;
+
+    self->context = fz_clone_context(self->context);
+    if (!self->context) {
+        fprintf(stderr, "In render thread %d: fz_clone_context returned NULL\n",
+            self->id);
+        abort();
+    }
+
+    printf("Render thread %d up and running.\n", self->id);
+    pthread_mutex_lock(&self->mutex);
+    /* Wait for first command */
+    pthread_cond_wait(&self->cond, &self->mutex);
+
+    while (self->keep_running) {
+
+        /* Render a page */
+        self->pixmap = page_to_pixmap(self->context, doc, self->pagenum);
+        if (!self->pixmap) {
+            fprintf(stderr, "In render thread %d: "
+                "page_to_pixmap returned NULL\n", self->id);
+            abort();
+        }
+
+        /* Push completed page to event queue */
+        SDL_PushEvent(&my_event);
+
+        pthread_cond_wait(&self->cond, &self->mutex);
+    }
+
+    pthread_mutex_unlock(&self->mutex);
+
+    /* Cleanup */
+    fz_free_context(self->context);
+
+    return NULL;
+}
+
 static void draw_screen(void)
 {
     unsigned int i;
     int ww, hh;
     int pow2_ww, pow2_hh;
+    float tsm, ttm, tsc, ttc;
 
     /* View dimensions of pages */
     float vw, vh;
@@ -664,6 +823,11 @@ static void draw_screen(void)
         RPOW2(pow2_ww, ww);
         RPOW2(pow2_hh, hh);
         glScalef(ww / (float)pow2_ww, hh / (float)pow2_hh, 1.0f);
+        ttm = (float)pow2_hh / hh * 8;
+        tsm = (float)pow2_ww / ww * 8;
+    } else {
+        tsm = 8;
+        ttm = 8;
     }
 
 	glClearColor(0.5f, 0.5f, 0.5f, 0.0f);
@@ -692,26 +856,35 @@ static void draw_screen(void)
         /* printf("Page: %d, size: (%f, %f)\n", i, imw, imh); */
         glColor3f(1.0, 1.0, 1.0);
 
-        /* printf("Binding texture: %d\n", pages[i]); */
-        glBindTexture(GL_TEXTURE_2D, pages[i]);
+        /* printf("Binding texture: %d\n", pages[i].texture); */
+        if (pages[i].texture) {
+            printf("Binding texture: %d\n", pages[i].texture);
+            glBindTexture(GL_TEXTURE_2D, pages[i].texture);
+            tsc = ttc = 1;
+        } else {
+            puts("Binding busy");
+            glBindTexture(GL_TEXTURE_2D, busy_texture);
+            tsc = tsm;
+            ttc = ttm;
+        }
         /* printf("OpenGL error: %s\n", gluErrorString(glGetError())); */
         /* Send our triangle data to the pipeline. */
         glBegin(GL_QUADS);
 
         /* Bottom-left vertex (corner) */
-        glTexCoord2i(0, 0);
+        glTexCoord2f(0, 0);
         glVertex3f(0.f, 0.f, 0.0f);
 
         /* Bottom-right vertex (corner) */
-        glTexCoord2i(1, 0);
+        glTexCoord2f(tsc, 0);
         glVertex3f(vw, 0.f, 0.f);
 
         /* Top-right vertex (corner) */
-        glTexCoord2i(1, 1);
+        glTexCoord2f(tsc, ttc);
         glVertex3f(vw, vh, 0.f);
 
         /* Top-left vertex (corner) */
-        glTexCoord2i(0, 1);
+        glTexCoord2f(0, ttc);
         glVertex3f(0.f, vh, 0.f);
 
         glEnd();
@@ -738,25 +911,113 @@ static void draw_screen(void)
 	SDL_GL_SwapBuffers();
 }
 
+/* XXX Error handling :-( */
+static void init_busy_texture() {
+    unsigned int tex[4] =
+        {
+            0xffaa8888,
+            0xff554444,
+            0xff554444,
+            0xffaa8888
+        };
+
+    glGenTextures(1, &busy_texture);
+    printf("Busy texture @ num: %d\n", busy_texture);
+    glBindTexture(GL_TEXTURE_2D, busy_texture);
+    DEBUG_GL(glBindTexture);
+
+    /* Set the texture's stretching properties */
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    DEBUG_GL(glTexParameteri);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    DEBUG_GL(glTexParameteri);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+            GL_NEAREST);
+    DEBUG_GL(glTexParameteri);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+            GL_NEAREST);
+    DEBUG_GL(glTexParameteri);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 2, 2,
+        0, GL_RGBA, GL_UNSIGNED_BYTE, tex);
+    DEBUG_GL(glTexImage2D);
+}
+
+static void init_threads(int thread_count, fz_context *context) {
+    int i;
+    int err;
+
+    threads = malloc(sizeof(struct least_thread) * thread_count);
+
+    for (i = 0; i < thread_count; i++) {
+        /* Setup sync */
+        pthread_cond_init(&threads[i].cond, NULL);
+        pthread_mutex_init(&threads[i].mutex, NULL);
+
+        /* Thread ID */
+        threads[i].id = i;
+
+        /* Setup loop and context */
+        threads[i].context = context;
+        threads[i].keep_running = 1;
+
+        err = pthread_create(&threads[i].tid, NULL, render_thread,
+            (void*)(threads + i));
+        if (err) {
+            errno = err;
+            perror("Creating render thread failed");
+            abort();
+        }
+
+    }
+
+}
+
+/* Initialises mutexes required for Fitz locking */
+static void init_least_context_locks(void)
+{
+    int i, err;
+
+    for (i = 0; i < FZ_LOCK_MAX; i++) {
+        err = pthread_mutex_init(least_lock_list + i, NULL);
+        if (err) {
+            errno = err;
+            perror("Mutex initialisation failed");
+            abort();
+        }
+    }
+}
+
 int main (int argc, char **argv) {
     fz_context *context;
     int *pageinfo = NULL;
     int i;
 
-    context = fz_new_context(NULL, NULL, FZ_STORE_DEFAULT);
+    /* Initialises mutexes required for Fitz locking */
+    init_least_context_locks();
+
+    context = fz_new_context(NULL, &least_context_locks, FZ_STORE_DEFAULT);
     if (!context)
         fprintf(stderr, "Failed to create context\n");
 
+    if (force_thread_count)
+        thread_count = force_thread_count;
+    else
+        thread_count = sysconf(_SC_NPROCESSORS_ONLN);
 
     if (argc == 2) {
         /* Initialize OpenGL window */
         setup_sdl();
+
+        /* Start render threads */
+        init_threads(thread_count, context);
 
         /*
          * At this point, we should have a properly setup
          * double-buffered window for use with OpenGL.
          */
         setup_opengl(w, h);
+        init_busy_texture();
 
         /* Check for non-power-of-two support */
         /* printf("Extensions are: %s\n", glGetString(GL_EXTENSIONS)); */
