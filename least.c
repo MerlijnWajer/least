@@ -757,6 +757,7 @@ next_event:
      */
     case LEAST_PAGE_COMPLETE:
         finish_page_render((struct least_thread*)event.user.data1);
+        redraw = 1;
         break;
 
     }
@@ -877,11 +878,11 @@ static void draw_screen(void)
 
         /* printf("Binding texture: %d\n", pages[i].texture); */
         if (pages[i].texture) {
-            printf("Binding texture: %d\n", pages[i].texture);
+            /* printf("Binding texture: %d\n", pages[i].texture); */
             glBindTexture(GL_TEXTURE_2D, pages[i].texture);
             tsc = ttc = 1;
         } else {
-            puts("Binding busy");
+            /* puts("Binding busy"); */
             glBindTexture(GL_TEXTURE_2D, busy_texture);
             tsc = tsm;
             ttc = ttm;
@@ -1036,6 +1037,9 @@ static void schedule_page(int pagenum)
  *
  * It schedules render jobs en removes pages no longer
  * needed.
+ *
+ * The cache currently uses the scroll variable for computing
+ * the focus page.
  */
 void update_cache(void)
 {
@@ -1045,16 +1049,39 @@ void update_cache(void)
         c_stop;
     int kills_left = idle_thread_count;
 
+    /* Compute page_focus */
+    if (scroll > 0.) {
+        page_focus = 0;
+    } else {
+        /* Page focus should be on the page occupying most of the display
+         *
+         * Every page takes up imh + 20 units of space in between.
+         * Split the window in 2 to scroll to the middle of the window.
+         * Finally add 10 units of scroll, because only 10 of the 20 units
+         * space belong the page on top of the window. This should create
+         * satisfying focus behaviour.
+         */
+        page_focus = (-scroll + (h / 2) + 10) / (imh + 20);
+        if (page_focus >= (int)pagec)
+            page_focus = pagec - 1;
+        printf("%f / %f = %d\n", -scroll + (h / 2) + 10, imh + 20, page_focus);
+    }
+
     /* Compute sliding cache window */
     c_start = page_focus - (pages_to_cache - 1) / 2;
     if (c_start < 0)
         c_start = 0;
 
     c_stop = c_start + pages_to_cache;
-    if (c_stop > (int)pagec)
+    if (c_stop > (int)pagec) {
         c_stop = pagec;
+        c_start = c_stop - pages_to_cache;
+        if (c_start < 0)
+            c_start = 0;
+    }
 
 #if 1
+    printf("Page focus is: %d\n", page_focus);
     printf("Current cache window: [%d, %d)\n", c_start, c_stop);
     printf("Idle thread count: %d\n", idle_thread_count);
 #endif
