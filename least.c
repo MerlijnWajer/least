@@ -872,11 +872,15 @@ static void draw_screen(void)
     vw = w;
     vh = (vw / ww) * hh;
 
-    if (scroll < imh + 20) {
+    pages_rendered = h / (vh + (vh / imh) * 20) + 2;
+
+    if (scroll < (imh + 20) * pages_rendered) {
         /* Scale based scroll */
-        glTranslatef(0.f, fmod(scroll, imh + 20) * (vh / imh) , 0.f);
+        if (scroll > 0)
+            glTranslatef(0.f, scroll, 0.f);
+        else
+            glTranslatef(0.f, fmod(scroll, imh + 20) * (vh / imh) , 0.f);
         page_offset = fmax(-scroll / (float)(imh + 20), 0);
-        pages_rendered = h / (vh + (vh / imh) * 20) + 2;
         /*printf("page_offset: %d\n", page_offset); */
         /*printf("pages_rendered: %d\n", pages_rendered);*/
 
