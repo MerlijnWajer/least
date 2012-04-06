@@ -2,25 +2,46 @@ Backend:
     -   Write API for multiple graphical frontends
     -   Text selection & searching.
 
+    -   Annotations:
+        -   
+
     -   On demand rendering / pixmap cache.
 
+SDL/GL Frontend:
+    -   Smooth scrolling [DONE]
+    -   Dragging with RMB [DONE]
+    -   Scrolling with arrow keys [DONE]
+    -   Scrolling with wheel [DONE]
+
+    -   Scrolling horizontally when we implement zoom. [TODO]
+
+    -   Text selection [TODO]
+        -   Hyperlinks
+
+    -   Page markers (like vim)
+
+    -   Annotations: [TODO]
+        -   Turn on/off annotation hints
+        -   Hover over annotation to completely see it? Render the text
+        somewhere else?
+
+    -   Options frontend. (Drop down menu, a-la Quake)
+        -   Semi-transparent.
+
+    -   Chapter overview.
+
+SDL/GLES Frontend: ( http://wiki.meego.com/SDL_Gles )
+    -   Largely the same as SDL/GL, but requires some different GLES commands.
+        [TODO]
+
+Android Port: ( http://jiggawatt.org/badc0de/android/index.html#sdl )
+
 Frontend:
-    -   OpenGL|ES frontend using either SDL. ( http://wiki.meego.com/SDL_Gles )
     -   GTK 2D frontend.
     -   Firefox plug-in using NPAPI.
 
 View modes:
     -   Multiple pages per row.
     -   ``Book'' mode. (two pages visible, next page chooses the two next pages)
-    -   Presentation mode. (Perhaps smooth effects)
+    -   Presentation mode. (Perhaps smooth effects, one page visible at any time)
     -   ``Overview'' mode.
-
-
-Extra:
-    -   Auto scrolling. [DONE]
-    -   Way to set/change options (perhaps an overlay?)
-    -   Change bg colour
-
-
-NO:
-    -   Special fz_matrix'es for funky (or useful...) effects. (Just use OpenGL)
