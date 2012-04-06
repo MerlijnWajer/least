@@ -12,29 +12,35 @@
 
 static float
     w, h,           /* Window dimensions globals */
+    lw, lh,         /* Locked window dimension globals (texture generation) */
     gl_w, gl_h;     /* GL Backbuffer dimensions globals */
 
 SDL_Surface *surface;
 
 static float imw, imh, ims;
 
+/* PDF rendering */
 static int pixmap_to_texture(void *pixmap, int width, int height, int format, int type);
 static int page_to_texture(fz_context *ctx, fz_document *doc, int pagenum);
 static void draw_screen(void);
+
 static void toggle_fullscreen(void);
 
 struct least_thread;
 static void finish_page_render(struct least_thread *render);
 
+/* Scrolling */
 static float scroll = 0.0f;
 static int autoscroll = 0;
 static int autoscroll_var = 1;
 
+/* Window settings */
 static int redraw = 1; /* Window dirty? */
 
 static int fullscreen = 0; /* Are fullscreen? */
 static int prev_w, prev_h; /* W, H before fullscreen */
 
+/* Input settings */
 static int mouse_button_down = 0; /* Contains what mouse buttons are down */
 
 #define LEAST_KEY_DOWN 1 << 1
@@ -86,6 +92,9 @@ struct least_thread {
 
     /* Fitz context (cloned upon thread entry) */
     fz_context *context;
+
+    /* Pre-refresh flag */
+    int pre_refresh;
 
     /* Action specification */
     volatile int keep_running;
@@ -227,8 +236,13 @@ static fz_pixmap *page_to_pixmap(fz_context *context, fz_document *doc, int page
 
     bounds = fz_bound_page(doc, page);
 
-    ims = scale = w / bounds.x1;
-    printf("W, H: (%f, %f)\n", w, h);
+    /* XXX: There is a small risk of lw/lh being incorrect
+     * due to a race condition during a refresh.
+     * This shouldn't affect any visible pages though, as it causes renders
+     * that will be discarded by finish_page_render to be faulty.
+     */
+    ims = scale = lw / bounds.x1;
+    printf("W, H: (%f, %f)\n", lw, lh);
     printf("Scale: %f\n", scale);
 
     ctm = fz_scale(scale, scale);
@@ -260,55 +274,24 @@ static fz_pixmap *page_to_pixmap(fz_context *context, fz_document *doc, int page
 }
 
 static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
-    fz_page *page;
     fz_pixmap *image;
-    fz_device *dev;
-    fz_rect bounds;
-    fz_bbox bbox;
-    fz_matrix ctm;
-    float scale;
 
-    printf("Rendering page %d\n", pagenum);
-    page = fz_load_page(doc, pagenum);
+    /* Since this function is only called initially, this is an excellent place
+     * to lock the window height/width.
+     * Afterwards this can be changed using the 'F5' key.
+     */
+    lw = w;
+    lh = h;
 
-    bounds = fz_bound_page(doc, page);
+    /* Convert page to pixmap */
+    image = page_to_pixmap(context, doc, pagenum);
 
-    scale = w / bounds.x1;
-    printf("W, H: (%f, %f)\n", w, h);
-    printf("Scale: %f\n", scale);
-
-    ctm = fz_scale(scale, scale);
-
-    pages[pagenum].w = bounds.x1;
-    pages[pagenum].h = bounds.y1;
-
-    bounds.x1 *= scale;
-    bounds.y1 *= scale;
-
-    pages[pagenum].sw = bounds.x1;
-    pages[pagenum].sh = bounds.y1;
-
-    bbox = fz_round_rect(bounds);
-    printf("Size: (%d, %d)\n", bbox.x1, bbox.y1);
-
-
-    image = fz_new_pixmap_with_bbox(context, fz_device_rgb, bbox);
-    dev = fz_new_draw_device(context, image);
-
-    fz_clear_pixmap_with_value(context, image, 255);
-    fz_run_page(doc, page, dev, ctm, NULL);
-
-    /* Draw onto pixmap here */
+    /* Convert to texture here */
     pages[pagenum].texture = pixmap_to_texture((void*)fz_pixmap_samples(context, image),
             fz_pixmap_width(context, image),
             fz_pixmap_height(context, image), 0, 0);
 
-
     fz_drop_pixmap(context, image);
-
-    fz_free_device(dev);
-
-    fz_free_page(doc, page);
 
     return pages[pagenum].texture;
 }
@@ -435,6 +418,8 @@ static void handle_key_up(SDL_keysym * keysym) {
 
 static void handle_key_down(SDL_keysym * keysym)
 {
+    unsigned int i;
+
 	switch (keysym->sym) {
 	case SDLK_ESCAPE:
 		quit_tutorial(0);
@@ -456,6 +441,38 @@ static void handle_key_down(SDL_keysym * keysym)
     case SDLK_PAGEUP:
         scroll += imh + 20;
         redraw = 1;
+        break;
+
+    case SDLK_F5:
+        printf("refresh: Killing cache\n");
+
+        /* Kill all stored pages */
+        for (i = 0; i < pagec; i++)
+            if (pages[i].texture) {
+                printf("refresh: Killing page %d\n", i);
+                glDeleteTextures(1, &pages[i].texture);
+                pages[i].texture = 0;
+            } else if (pages[i].rendering) {
+                printf("refresh: Removing render flag from active page %d\n",
+                    i);
+                pages[i].rendering = 0;
+            }
+
+        /* To prevent running renders with old settings from
+         * entering the refreshed cache, mark all threads
+         * as in pre-refresh state.
+         */
+        for (i = 0; i < (unsigned int)thread_count; i++)
+            threads[i].pre_refresh = 1;
+        printf("refresh: Marked %d running threads as pre-refresh renders\n",
+            thread_count - idle_thread_count);
+
+        /* Finally update the render resolution to current window size */
+        printf("refresh: Changing size lock from %.2fx%.2f to %.2fx%.2f\n",
+            lw, lh, w, h);
+
+        lw = w;
+        lh = h;
         break;
 
     case SDLK_F11:
@@ -1057,6 +1074,7 @@ static void schedule_page(int pagenum)
     /* Configure thread */
     t->pagenum = pagenum;
     t->scale = ims;
+    t->pre_refresh = 0;
 
     /* Start rendering */
     pthread_mutex_lock(&t->mutex);
@@ -1159,14 +1177,20 @@ static void finish_page_render(struct least_thread *render)
 
     d.volatile_pixmap = render->pixmap;
 
-    /* Page is complete and no longer rendering */
-    pages[render->pagenum].rendering = 0;
-
     /* XXX Error handling ? */
-    pages[render->pagenum].texture = pixmap_to_texture(
-        (void*)fz_pixmap_samples(render->context, d.pixmap),
-        fz_pixmap_width(render->context, d.pixmap),
-        fz_pixmap_height(render->context, d.pixmap), 0, 0);
+    if (render->pre_refresh)
+        printf("finish_page: Discarding pre-refresh render "
+            "of page %d by thread %d\n", render->pagenum, render->id);
+    else {
+        /* Page is complete and no longer rendering */
+        pages[render->pagenum].rendering = 0;
+
+        /* Convert to texture */
+        pages[render->pagenum].texture = pixmap_to_texture(
+            (void*)fz_pixmap_samples(render->context, d.pixmap),
+            fz_pixmap_width(render->context, d.pixmap),
+            fz_pixmap_height(render->context, d.pixmap), 0, 0);
+    }
 
     /* XXX Using the threads context might not be a gr8 idea */
     fz_drop_pixmap(render->context, d.pixmap);
