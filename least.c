@@ -128,7 +128,7 @@ static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
     ppage = fz_new_text_page(context, bounds);
 
     textdev = fz_new_text_device(context, page_sheet, ppage);
-    fz_run_page(doc, page, textdev, ctm, NULL);
+    fz_run_page(doc, page, textdev, fz_identity, NULL);
 
     s = malloc(sizeof(char) * 4096);
     sprintf(s, "/tmp/out-%d.txt", pagenum);
