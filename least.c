@@ -97,6 +97,11 @@ static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
     fz_matrix ctm;
     float scale;
 
+    fz_device *textdev;
+    fz_text_sheet *page_sheet;
+    fz_text_page *ppage;
+    char *s;
+
     printf("Rendering page %d\n", pagenum);
     page = fz_load_page(doc, pagenum);
 
@@ -118,6 +123,17 @@ static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
 
     fz_clear_pixmap_with_value(context, image, 255);
     fz_run_page(doc, page, dev, ctm, NULL);
+
+    page_sheet = fz_new_text_sheet(context);
+    ppage = fz_new_text_page(context, bounds);
+
+    textdev = fz_new_text_device(context, page_sheet, ppage);
+    fz_run_page(doc, page, textdev, ctm, NULL);
+
+    s = malloc(sizeof(char) * 4096);
+    sprintf(s, "/tmp/out-%d.txt", pagenum);
+    fz_print_text_page(context, fopen(s, "w+"), ppage);
+    free(s);
 
     /* Draw onto pixmap here */
     pages[pagenum] = pixmap_to_texture((void*)fz_pixmap_samples(context, image),
