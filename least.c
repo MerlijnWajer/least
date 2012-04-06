@@ -976,6 +976,22 @@ static void init_busy_texture() {
 static void init_threads(int thread_count, fz_context *context) {
     int i;
     int err;
+    size_t stack_size;
+    pthread_attr_t attr;
+
+    /* Fetch current stacksize */
+    pthread_attr_init(&attr);
+    pthread_attr_getstacksize(&attr, &stack_size);
+    printf("Default stack size: %zu\n", stack_size);
+
+    /* Ensure at least 1MB of stacksize */
+    if (stack_size < 1048576) {
+        stack_size = 1048576;
+        printf("Changing to %zu\n", stack_size);
+        pthread_attr_setstacksize(&attr, stack_size);
+    } else {
+        puts("This stack size is okay.");
+    }
 
     threads = malloc(sizeof(struct least_thread) * thread_count);
     idle_threads = malloc(sizeof(struct least_thread*) * thread_count);
@@ -992,7 +1008,7 @@ static void init_threads(int thread_count, fz_context *context) {
         threads[i].context = context;
         threads[i].keep_running = 1;
 
-        err = pthread_create(&threads[i].tid, NULL, render_thread,
+        err = pthread_create(&threads[i].tid, &attr, render_thread,
             (void*)(threads + i));
         if (err) {
             errno = err;
@@ -1005,6 +1021,9 @@ static void init_threads(int thread_count, fz_context *context) {
 
     idle_thread_count = thread_count;
 
+    pthread_attr_destroy(&attr);
+
+    return;
 }
 
 /* Initialises mutexes required for Fitz locking */
