@@ -65,7 +65,7 @@ static unsigned int pagec;
 static struct least_page_info *pages;
 
 /* Cache settings */
-static const int pages_to_cache = 5;
+static const int pages_to_cache = 16;
 static int page_focus = 0;
 
 /* Cache busy texture */
@@ -314,7 +314,7 @@ static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
 }
 
 
-#if 1
+#if 0
 #define DEBUG_GL(STR) \
     printf("OpenGL error " #STR ": %s\n", gluErrorString(glGetError()))
 #else
@@ -822,6 +822,9 @@ static void *render_thread(void *t)
 static void draw_screen(void)
 {
     unsigned int i;
+    unsigned int
+        page_offset,
+        pages_rendered;
     int ww, hh;
     int pow2_ww, pow2_hh;
     float tsm, ttm, tsc, ttc;
@@ -869,53 +872,60 @@ static void draw_screen(void)
     vw = w;
     vh = (vw / ww) * hh;
 
-    /* Scale based scroll */
-    glTranslatef(0.f, scroll * (vh / imh) , 0.f);
+    if (scroll < imh + 20) {
+        /* Scale based scroll */
+        glTranslatef(0.f, fmod(scroll, imh + 20) * (vh / imh) , 0.f);
+        page_offset = fmax(-scroll / (float)(imh + 20), 0);
+        pages_rendered = h / (vh + (vh / imh) * 20) + 2;
+        /*printf("page_offset: %d\n", page_offset); */
+        /*printf("pages_rendered: %d\n", pages_rendered);*/
 
-    for(i = 0; i < pagec; i++) {
-        /* printf("Page: %d, size: (%f, %f)\n", i, imw, imh); */
         glColor3f(1.0, 1.0, 1.0);
+        for (i = page_offset; i < page_offset + pages_rendered &&
+                i < pagec; i++) {
+            /* printf("Page: %d, size: (%f, %f)\n", i, imw, imh); */
 
-        /* printf("Binding texture: %d\n", pages[i].texture); */
-        if (pages[i].texture) {
             /* printf("Binding texture: %d\n", pages[i].texture); */
-            glBindTexture(GL_TEXTURE_2D, pages[i].texture);
-            tsc = ttc = 1;
-        } else {
-            /* puts("Binding busy"); */
-            glBindTexture(GL_TEXTURE_2D, busy_texture);
-            tsc = tsm;
-            ttc = ttm;
+            if (pages[i].texture) {
+                /* printf("Binding texture: %d\n", pages[i].texture); */
+                glBindTexture(GL_TEXTURE_2D, pages[i].texture);
+                tsc = ttc = 1;
+            } else {
+                /* puts("Binding busy"); */
+                glBindTexture(GL_TEXTURE_2D, busy_texture);
+                tsc = tsm;
+                ttc = ttm;
+            }
+            /* printf("OpenGL error: %s\n", gluErrorString(glGetError())); */
+            /* Send our triangle data to the pipeline. */
+            glBegin(GL_QUADS);
+
+            /* Bottom-left vertex (corner) */
+            glTexCoord2f(0, 0);
+            glVertex3f(0.f, 0.f, 0.0f);
+
+            /* Bottom-right vertex (corner) */
+            glTexCoord2f(tsc, 0);
+            glVertex3f(vw, 0.f, 0.f);
+
+            /* Top-right vertex (corner) */
+            glTexCoord2f(tsc, ttc);
+            glVertex3f(vw, vh, 0.f);
+
+            /* Top-left vertex (corner) */
+            glTexCoord2f(0, ttc);
+            glVertex3f(0.f, vh, 0.f);
+
+            glEnd();
+            /*
+            if (i % 2 == 0)
+                glTranslatef(ww + 20, 0.f, 0.f);
+            else {
+                glTranslatef(-ww -20, hh + 20, 0.f);
+            }
+            */
+            glTranslatef(0.0f, vh + (vh / imh) * 20, 0.f);
         }
-        /* printf("OpenGL error: %s\n", gluErrorString(glGetError())); */
-        /* Send our triangle data to the pipeline. */
-        glBegin(GL_QUADS);
-
-        /* Bottom-left vertex (corner) */
-        glTexCoord2f(0, 0);
-        glVertex3f(0.f, 0.f, 0.0f);
-
-        /* Bottom-right vertex (corner) */
-        glTexCoord2f(tsc, 0);
-        glVertex3f(vw, 0.f, 0.f);
-
-        /* Top-right vertex (corner) */
-        glTexCoord2f(tsc, ttc);
-        glVertex3f(vw, vh, 0.f);
-
-        /* Top-left vertex (corner) */
-        glTexCoord2f(0, ttc);
-        glVertex3f(0.f, vh, 0.f);
-
-        glEnd();
-        /*
-        if (i % 2 == 0)
-            glTranslatef(ww + 20, 0.f, 0.f);
-        else {
-            glTranslatef(-ww -20, hh + 20, 0.f);
-        }
-        */
-        glTranslatef(0.0f, vh + (vh / imh) * 20, 0.f);
     }
 
 	/*
@@ -1064,7 +1074,6 @@ void update_cache(void)
         page_focus = (-scroll + (h / 2) + 10) / (imh + 20);
         if (page_focus >= (int)pagec)
             page_focus = pagec - 1;
-        printf("%f / %f = %d\n", -scroll + (h / 2) + 10, imh + 20, page_focus);
     }
 
     /* Compute sliding cache window */
@@ -1080,7 +1089,7 @@ void update_cache(void)
             c_start = 0;
     }
 
-#if 1
+#if 0
     printf("Page focus is: %d\n", page_focus);
     printf("Current cache window: [%d, %d)\n", c_start, c_stop);
     printf("Idle thread count: %d\n", idle_thread_count);
@@ -1146,7 +1155,7 @@ static void finish_page_render(struct least_thread *render)
 int main (int argc, char **argv) {
     fz_context *context;
     int *pageinfo = NULL;
-    int i;
+    /* int i; */
 
     /* Initialises mutexes required for Fitz locking */
     init_least_context_locks();
@@ -1211,11 +1220,13 @@ int main (int argc, char **argv) {
                 draw_screen();
             }
 
+            /*
             pageinfo = NULL;
             for(i = 0; i < visible_pages(pageinfo); i++) {
                 printf("%d, ", i);
             }
             printf("\n");
+            */
 
             free(pageinfo);
         }
