@@ -54,7 +54,7 @@ static int power_of_two = 0;
 static const int force_power_of_two = 0;
 
 /* Set to non-zero value to force render threads to specific number */
-static const int force_thread_count = 0;
+static const int force_thread_count = 1;
 static int thread_count = 0;
 
 /* Global PDF document */
@@ -71,7 +71,7 @@ static unsigned int pagec;
 static struct least_page_info *pages;
 
 /* Cache settings */
-static const int pages_to_cache = 16;
+static const int pages_to_cache = 5;
 static int page_focus = 0;
 
 /* Cache busy texture */
