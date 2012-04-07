@@ -448,6 +448,11 @@ static void handle_key_down(SDL_keysym * keysym)
 		redraw = 1;
 		break;
 
+	case SDLK_END:
+		scroll = -(imh + 20) * (pagec - 1);
+		redraw = 1;
+		break;
+
     case SDLK_F5:
         printf("refresh: Killing cache\n");
 
@@ -1264,21 +1269,9 @@ int main (int argc, char **argv) {
             update_cache();
 
             if (redraw) {
-                /*
-                glDeleteTextures(pagec, pages);
-                open_pdf(context, argv[1]);
-                */
                 redraw = 0;
                 draw_screen();
             }
-
-            /*
-            pageinfo = NULL;
-            for(i = 0; i < visible_pages(pageinfo); i++) {
-                printf("%d, ", i);
-            }
-            printf("\n");
-            */
 
             free(pageinfo);
         }
