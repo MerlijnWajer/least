@@ -571,6 +571,7 @@ static void handle_mouse_up(SDL_MouseButtonEvent *event) {
         case 1:
             mouse_button_down &= ~(1 << 1);
             selecting = 0;
+            selx0 = sely0 = selx1 = sely1 = 0;
             redraw = 1;
             break;
         case 2:
@@ -1012,7 +1013,7 @@ static void draw_screen(void)
         }
     }
 
-    if (selecting) {
+    if (selecting && selx1 && sely1) {
         glLoadIdentity();
         glColor3f(0.7f, 0.7f, 0.7f);
         glTranslatef(selx0, sely0, 0.f);
