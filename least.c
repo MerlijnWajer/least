@@ -5,37 +5,52 @@
 #include "mupdf/fitz/fitz.h"
 #include "mupdf/pdf/mupdf.h"
 
+#include <sys/types.h>
+#include <pthread.h>
 #include <unistd.h>
+#include <math.h>
 
 static float
     w, h,           /* Window dimensions globals */
+    lw, lh,         /* Locked window dimension globals (texture generation) */
     gl_w, gl_h;     /* GL Backbuffer dimensions globals */
 
 SDL_Surface *surface;
 
-float imw, imh;
-GLuint *pages;
-unsigned int pagec;
+static float imw, imh, ims;
 
+/* PDF rendering */
 static int pixmap_to_texture(void *pixmap, int width, int height, int format, int type);
 static int page_to_texture(fz_context *ctx, fz_document *doc, int pagenum);
 static void draw_screen(void);
+
 static void toggle_fullscreen(void);
 
+struct least_thread;
+static void finish_page_render(struct least_thread *render);
+
+/* Scrolling */
 static float scroll = 0.0f;
 static int autoscroll = 0;
 static int autoscroll_var = 1;
 
+/* Window settings */
 static int redraw = 1; /* Window dirty? */
 
 static int fullscreen = 0; /* Are fullscreen? */
 static int prev_w, prev_h; /* W, H before fullscreen */
 
+/* Input settings */
 static int mouse_button_down = 0; /* Contains what mouse buttons are down */
 
 #define LEAST_KEY_DOWN 1 << 1
 #define LEAST_KEY_UP 1 << 2
 static int key_button_down = 0; /* Contains what special keys are down */
+
+/* Selecting */
+static int selecting = 0;
+static int selx0, selx1, sely0, sely1;
+
 
 /* Set to 1 if the machine does not support NPOT textures */
 static int power_of_two = 0;
@@ -43,9 +58,139 @@ static int power_of_two = 0;
 /* Set to 1 to force use of POT mechanism */
 static const int force_power_of_two = 0;
 
+/* Set to non-zero value to force render threads to specific number */
+static const int force_thread_count = 1;
+static int thread_count = 0;
+
+/* Global PDF document */
+static fz_document *doc;
+
+struct least_page_info {
+    int w, h, sw, sh;
+    int rendering; /* Set to 1 if a thread is processing this page */
+    fz_text_page *page;
+    GLuint texture;
+};
+
+/* PDF page info */
+static unsigned int pagec;
+static struct least_page_info *pages;
+
+/* Cache settings */
+static const int pages_to_cache = 5;
+static int page_focus = 0;
+
+/* Cache busy texture */
+static GLuint busy_texture;
+
+/* Least page render complete event */
+#define LEAST_PAGE_COMPLETE (SDL_USEREVENT + 1)
+
+/* Every thread is tracked by this structure */
+struct least_thread {
+    /* Communication synchronisation */
+    pthread_cond_t cond;
+    pthread_mutex_t mutex;
+
+    /* Thread ID */
+    pthread_t tid;
+    int id;
+
+    /* Fitz context (cloned upon thread entry) */
+    fz_context *context;
+
+    /* Pre-refresh flag */
+    int pre_refresh;
+
+    /* Action specification */
+    volatile int keep_running;
+    volatile int pagenum;
+    volatile float scale;
+
+    /* Action results */
+    volatile fz_pixmap *pixmap;
+};
+
+static struct least_thread *threads;
+static struct least_thread **idle_threads;
+static int idle_thread_count;
+
+/* Fitz lock support */
+static pthread_mutex_t least_lock_list[FZ_LOCK_MAX];
+
+static void least_lock(void *user, int lock) {
+    pthread_mutex_t *m = user;
+    pthread_mutex_lock(&m[lock]);
+}
+
+static void least_unlock(void *user, int lock) {
+    pthread_mutex_t *m = user;
+    pthread_mutex_unlock(&m[lock]);
+}
+
+static struct fz_locks_context_s least_context_locks = {
+    least_lock_list,
+    least_lock,
+    least_unlock
+};
+
+
+/* Page visibility */
+int inrange(float s, float e, float p) {
+    float ss, ee;
+    /* I know, right */
+    if (s > e) {
+        ss = e;
+        ee = s;
+    } else {
+        ss = s;
+        ee = e;
+    }
+
+    return p > ss && p < ee;
+}
+
+int selection_to_page(void) {
+    int pagenum;
+
+    pagenum = scroll / imh;
+
+    return pagenum;
+}
+
+int visible_pages(int * pageinfo) {
+    unsigned int i, a;
+    float f, pf, s, e, scale;
+    f = pf = 0;
+    s = e = 0;
+    pageinfo = NULL;
+    a = 0;
+
+    for(i = 0; i < pagec; i++) {
+        scale = (((float)pages[i].sw / pages[i].w) * pages[i].w) / w;
+
+        pf = f;
+        f -= pages[i].sh;
+
+        s = scroll;
+        e = scroll - h * scale;
+
+        if (
+            inrange(s, e, pf) ||
+            inrange(s, e, f)  ||
+            inrange(pf, f, s) ||
+            inrange(pf, f, e)
+        ) {
+            pageinfo = realloc(pageinfo, sizeof(int) * ++a);
+            pageinfo[a - 1] = i;
+        }
+    }
+
+    return a;
+}
+
 int open_pdf(fz_context *context, char *filename) {
     fz_stream *file;
-    fz_document *doc;
     int faulty;
     unsigned int i;
     /* char * s; */
@@ -72,23 +217,27 @@ int open_pdf(fz_context *context, char *filename) {
     if (faulty)
         return faulty;
 
-    /* XXX error handling */
+    /* XXX need error handling */
     pagec = fz_count_pages(doc);
-    pages = malloc(sizeof(unsigned int) * pagec);
+    pages = malloc(sizeof(struct least_page_info) * pagec);
+
+    #if 0
+    return 0;
+    #endif
 
     for(i = 0; i < pagec; i++) {
-        page_to_texture(context, doc, i);
+        pages[i].rendering = 0;
+        pages[i].texture = 0;
+        pages[i].page = NULL;
+        /* page_to_texture(context, doc, i); */
     }
-
-
-    fz_close_document(doc);
-
+    page_to_texture(context, doc, 0);
 
     printf("Done opening\n");
     return 0;
 }
 
-static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
+static fz_pixmap *page_to_pixmap(fz_context *context, fz_document *doc, int pagenum) {
     fz_page *page;
     fz_pixmap *image;
     fz_device *dev;
@@ -99,7 +248,6 @@ static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
 
     fz_device *textdev;
     fz_text_sheet *page_sheet;
-    fz_text_page *ppage;
     char *s;
 
     printf("Rendering page %d\n", pagenum);
@@ -107,16 +255,29 @@ static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
 
     bounds = fz_bound_page(doc, page);
 
-    scale = w / bounds.x1;
-    printf("W, H: (%f, %f)\n", w, h);
+    /* XXX: There is a small risk of lw/lh being incorrect
+     * due to a race condition during a refresh.
+     * This shouldn't affect any visible pages though, as it causes renders
+     * that will be discarded by finish_page_render to be faulty.
+     */
+    ims = scale = lw / bounds.x1;
+    printf("W, H: (%f, %f)\n", lw, lh);
     printf("Scale: %f\n", scale);
 
     ctm = fz_scale(scale, scale);
 
+    pages[pagenum].w = bounds.x1;
+    pages[pagenum].h = bounds.y1;
+
     bounds.x1 *= scale;
     bounds.y1 *= scale;
+
+    pages[pagenum].sw = bounds.x1;
+    pages[pagenum].sh = bounds.y1;
+
     bbox = fz_round_rect(bounds);
     printf("Size: (%d, %d)\n", bbox.x1, bbox.y1);
+
 
     image = fz_new_pixmap_with_bbox(context, fz_device_rgb, bbox);
     dev = fz_new_draw_device(context, image);
@@ -125,30 +286,50 @@ static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
     fz_run_page(doc, page, dev, ctm, NULL);
 
     page_sheet = fz_new_text_sheet(context);
-    ppage = fz_new_text_page(context, bounds);
+    if (pages[pagenum].page)
+        fz_free_text_page(context, pages[pagenum].page);
 
-    textdev = fz_new_text_device(context, page_sheet, ppage);
-    fz_run_page(doc, page, textdev, fz_identity, NULL);
+    pages[pagenum].page = fz_new_text_page(context, bounds);
+
+    textdev = fz_new_text_device(context, page_sheet, pages[pagenum].page);
+    fz_run_page(doc, page, textdev, ctm, NULL);
 
     s = malloc(sizeof(char) * 4096);
     sprintf(s, "/tmp/out-%d.txt", pagenum);
-    fz_print_text_page(context, fopen(s, "w+"), ppage);
+    fz_print_text_page(context, fopen(s, "w+"), pages[pagenum].page);
     free(s);
 
-    /* Draw onto pixmap here */
-    pages[pagenum] = pixmap_to_texture((void*)fz_pixmap_samples(context, image),
-            fz_pixmap_width(context, image),
-            fz_pixmap_height(context, image), 0, 0);
-
-
-    fz_drop_pixmap(context, image);
-
+    fz_free_device(textdev);
     fz_free_device(dev);
 
     fz_free_page(doc, page);
 
-    return pages[pagenum];
+    return image;
 }
+
+static int page_to_texture(fz_context *context, fz_document *doc, int pagenum) {
+    fz_pixmap *image;
+
+    /* Since this function is only called initially, this is an excellent place
+     * to lock the window height/width.
+     * Afterwards this can be changed using the 'F5' key.
+     */
+    lw = w;
+    lh = h;
+
+    /* Convert page to pixmap */
+    image = page_to_pixmap(context, doc, pagenum);
+
+    /* Convert to texture here */
+    pages[pagenum].texture = pixmap_to_texture((void*)fz_pixmap_samples(context, image),
+            fz_pixmap_width(context, image),
+            fz_pixmap_height(context, image), 0, 0);
+
+    fz_drop_pixmap(context, image);
+
+    return pages[pagenum].texture;
+}
+
 
 #if 0
 #define DEBUG_GL(STR) \
@@ -247,7 +428,12 @@ static int pixmap_to_texture(void *pixmap, int width, int height, int format, in
 
 static void quit_tutorial(int code)
 {
-	glDeleteTextures(pagec, pages);
+    unsigned int i;
+
+    /* TODO: Free pages[i].page */
+
+    for (i = 0; i < pagec; i++)
+        glDeleteTextures(1, &pages[i].texture);
 
 	exit(code);
 }
@@ -268,6 +454,8 @@ static void handle_key_up(SDL_keysym * keysym) {
 
 static void handle_key_down(SDL_keysym * keysym)
 {
+    unsigned int i;
+
 	switch (keysym->sym) {
 	case SDLK_ESCAPE:
 		quit_tutorial(0);
@@ -289,6 +477,48 @@ static void handle_key_down(SDL_keysym * keysym)
     case SDLK_PAGEUP:
         scroll += imh + 20;
         redraw = 1;
+        break;
+
+	case SDLK_HOME:
+		scroll = 0;
+		redraw = 1;
+		break;
+
+	case SDLK_END:
+		scroll = -(imh + 20) * (pagec - 1);
+		redraw = 1;
+		break;
+
+    case SDLK_F5:
+        printf("refresh: Killing cache\n");
+
+        /* Kill all stored pages */
+        for (i = 0; i < pagec; i++)
+            if (pages[i].texture) {
+                printf("refresh: Killing page %d\n", i);
+                glDeleteTextures(1, &pages[i].texture);
+                pages[i].texture = 0;
+            } else if (pages[i].rendering) {
+                printf("refresh: Removing render flag from active page %d\n",
+                    i);
+                pages[i].rendering = 0;
+            }
+
+        /* To prevent running renders with old settings from
+         * entering the refreshed cache, mark all threads
+         * as in pre-refresh state.
+         */
+        for (i = 0; i < (unsigned int)thread_count; i++)
+            threads[i].pre_refresh = 1;
+        printf("refresh: Marked %d running threads as pre-refresh renders\n",
+            thread_count - idle_thread_count);
+
+        /* Finally update the render resolution to current window size */
+        printf("refresh: Changing size lock from %.2fx%.2f to %.2fx%.2f\n",
+            lw, lh, w, h);
+
+        lw = w;
+        lh = h;
         break;
 
     case SDLK_F11:
@@ -313,6 +543,9 @@ static void handle_mouse_down(SDL_MouseButtonEvent *event) {
     switch (event->button) {
         case 1:
             mouse_button_down |= 1 << 1;
+            selecting = 1;
+            selx0 = event->x;
+            sely0 = event->y;
             break;
         case 2:
             mouse_button_down |= 1 << 2;
@@ -337,6 +570,8 @@ static void handle_mouse_up(SDL_MouseButtonEvent *event) {
     switch (event->button) {
         case 1:
             mouse_button_down &= ~(1 << 1);
+            selecting = 0;
+            redraw = 1;
             break;
         case 2:
             mouse_button_down &= ~(1 << 2);
@@ -365,6 +600,16 @@ static void handle_mouse_motion(SDL_MouseMotionEvent *event) {
                     event->xrel, event->yrel);
                     */
             scroll += event->yrel * 2;
+            redraw = 1;
+        }
+
+        if (mouse_button_down & (1 << 1)) {
+            selx1 = event->x;
+            sely1 = event->y;
+
+            printf("Selecting from: (%d, %d) to (%d, %d)\n", selx0, sely0,
+                    selx1, sely1);
+
             redraw = 1;
         }
 
@@ -553,27 +798,44 @@ next_event:
         /* Handle key presses. */
         handle_key_down(&event.key.keysym);
         break;
+
     case SDL_KEYUP:
         handle_key_up(&event.key.keysym);
         break;
+
     case SDL_QUIT:
         /* Handle quit requests (like Ctrl-c). */
         quit_tutorial(0);
         break;
+
     case SDL_VIDEORESIZE:
         handle_resize(event.resize);
         break;
+
     case SDL_VIDEOEXPOSE:
         redraw = 1;
         break;
+
     case SDL_MOUSEBUTTONDOWN:
         handle_mouse_down(&event.button);
         break;
+
     case SDL_MOUSEBUTTONUP:
         handle_mouse_up(&event.button);
         break;
+
     case SDL_MOUSEMOTION:
         handle_mouse_motion(&event.motion);
+        break;
+
+    /* A thread completed its rendering
+     *
+     * The thread structure of the completed job is contained
+     * within the data1 pointer of the event.
+     */
+    case LEAST_PAGE_COMPLETE:
+        finish_page_render((struct least_thread*)event.user.data1);
+        redraw = 1;
         break;
 
     }
@@ -588,11 +850,62 @@ next_event:
     }
 }
 
+/* Render thread entry */
+static void *render_thread(void *t)
+{
+    SDL_Event my_event;
+    struct least_thread *self = t;
+
+    my_event.type = LEAST_PAGE_COMPLETE;
+    my_event.user.data1 = t;
+
+    self->context = fz_clone_context(self->context);
+    if (!self->context) {
+        fprintf(stderr, "In render thread %d: fz_clone_context returned NULL\n",
+            self->id);
+        abort();
+    }
+
+    printf("Render thread %d up and running.\n", self->id);
+    pthread_mutex_lock(&self->mutex);
+    /* Wait for first command */
+    pthread_cond_wait(&self->cond, &self->mutex);
+
+    while (self->keep_running) {
+
+        printf("Thread %d: Rendering page %d\n", self->id, self->pagenum);
+
+        /* Render a page */
+        self->pixmap = page_to_pixmap(self->context, doc, self->pagenum);
+        if (!self->pixmap) {
+            fprintf(stderr, "In render thread %d: "
+                "page_to_pixmap returned NULL\n", self->id);
+            abort();
+        }
+
+        /* Push completed page to event queue */
+        SDL_PushEvent(&my_event);
+
+        pthread_cond_wait(&self->cond, &self->mutex);
+    }
+
+    pthread_mutex_unlock(&self->mutex);
+
+    /* Cleanup */
+    fz_free_context(self->context);
+
+    return NULL;
+}
+
 static void draw_screen(void)
 {
     unsigned int i;
+    unsigned int
+        page_offset,
+        pages_rendered;
     int ww, hh;
     int pow2_ww, pow2_hh;
+    float tsm, ttm, tsc, ttc;
 
     /* View dimensions of pages */
     float vw, vh;
@@ -611,6 +924,11 @@ static void draw_screen(void)
         RPOW2(pow2_ww, ww);
         RPOW2(pow2_hh, hh);
         glScalef(ww / (float)pow2_ww, hh / (float)pow2_hh, 1.0f);
+        ttm = (float)pow2_hh / hh * 8;
+        tsm = (float)pow2_ww / ww * 8;
+    } else {
+        tsm = 8;
+        ttm = 8;
     }
 
 	glClearColor(0.5f, 0.5f, 0.5f, 0.0f);
@@ -632,44 +950,81 @@ static void draw_screen(void)
     vw = w;
     vh = (vw / ww) * hh;
 
-    /* Scale based scroll */
-    glTranslatef(0.f, scroll * (vh / imh) , 0.f);
+    pages_rendered = h / (vh + (vh / imh) * 20) + 2;
 
-    for(i = 0; i < pagec; i++) {
-        /* printf("Page: %d, size: (%f, %f)\n", i, imw, imh); */
+    if (scroll < (imh + 20) * pages_rendered) {
+        /* Scale based scroll */
+        if (scroll > 0)
+            glTranslatef(0.f, scroll, 0.f);
+        else
+            glTranslatef(0.f, fmod(scroll, imh + 20) * (vh / imh) , 0.f);
+        page_offset = fmax(-scroll / (float)(imh + 20), 0);
+        /*printf("page_offset: %d\n", page_offset); */
+        /*printf("pages_rendered: %d\n", pages_rendered);*/
+
         glColor3f(1.0, 1.0, 1.0);
+        for (i = page_offset; i < page_offset + pages_rendered &&
+                i < pagec; i++) {
+            /* printf("Page: %d, size: (%f, %f)\n", i, imw, imh); */
 
-        /* printf("Binding texture: %d\n", pages[i]); */
-        glBindTexture(GL_TEXTURE_2D, pages[i]);
-        /* printf("OpenGL error: %s\n", gluErrorString(glGetError())); */
-        /* Send our triangle data to the pipeline. */
+            /* printf("Binding texture: %d\n", pages[i].texture); */
+            if (pages[i].texture) {
+                /* printf("Binding texture: %d\n", pages[i].texture); */
+                glBindTexture(GL_TEXTURE_2D, pages[i].texture);
+                tsc = ttc = 1;
+            } else {
+                /* puts("Binding busy"); */
+                glBindTexture(GL_TEXTURE_2D, busy_texture);
+                tsc = tsm;
+                ttc = ttm;
+            }
+            /* printf("OpenGL error: %s\n", gluErrorString(glGetError())); */
+            /* Send our triangle data to the pipeline. */
+
+            glBegin(GL_QUADS);
+
+            /* Bottom-left vertex (corner) */
+            glTexCoord2f(0, 0);
+            glVertex3f(0.f, 0.f, 0.0f);
+
+            /* Bottom-right vertex (corner) */
+            glTexCoord2f(tsc, 0);
+            glVertex3f(vw, 0.f, 0.f);
+
+            /* Top-right vertex (corner) */
+            glTexCoord2f(tsc, ttc);
+            glVertex3f(vw, vh, 0.f);
+
+            /* Top-left vertex (corner) */
+            glTexCoord2f(0, ttc);
+            glVertex3f(0.f, vh, 0.f);
+
+            glEnd();
+
+            /*
+            if (i % 2 == 0)
+                glTranslatef(ww + 20, 0.f, 0.f);
+            else {
+                glTranslatef(-ww -20, hh + 20, 0.f);
+            }
+            */
+            glTranslatef(0.0f, vh + (vh / imh) * 20, 0.f);
+        }
+    }
+
+    if (selecting) {
+        glLoadIdentity();
+        glColor3f(0.7f, 0.7f, 0.7f);
+        glTranslatef(selx0, sely0, 0.f);
+
         glBegin(GL_QUADS);
 
-        /* Bottom-left vertex (corner) */
-        glTexCoord2i(0, 0);
         glVertex3f(0.f, 0.f, 0.0f);
-
-        /* Bottom-right vertex (corner) */
-        glTexCoord2i(1, 0);
-        glVertex3f(vw, 0.f, 0.f);
-
-        /* Top-right vertex (corner) */
-        glTexCoord2i(1, 1);
-        glVertex3f(vw, vh, 0.f);
-
-        /* Top-left vertex (corner) */
-        glTexCoord2i(0, 1);
-        glVertex3f(0.f, vh, 0.f);
+        glVertex3f(selx1 - selx0, 0.f, 0.f);
+        glVertex3f(selx1 - selx0, sely1 - sely0, 0.f);
+        glVertex3f(0.f, sely1 - sely0, 0.f);
 
         glEnd();
-        /*
-        if (i % 2 == 0)
-            glTranslatef(ww + 20, 0.f, 0.f);
-        else {
-            glTranslatef(-ww -20, hh + 20, 0.f);
-        }
-        */
-        glTranslatef(0.0f, vh + (vh / imh) * 20, 0.f);
     }
 
 	/*
@@ -685,22 +1040,273 @@ static void draw_screen(void)
 	SDL_GL_SwapBuffers();
 }
 
+/* XXX Error handling :-( */
+static void init_busy_texture() {
+    unsigned int tex[4] =
+        {
+            0xffaa8888,
+            0xff554444,
+            0xff554444,
+            0xffaa8888
+        };
+
+    glGenTextures(1, &busy_texture);
+    printf("Busy texture @ num: %d\n", busy_texture);
+    glBindTexture(GL_TEXTURE_2D, busy_texture);
+    DEBUG_GL(glBindTexture);
+
+    /* Set the texture's stretching properties */
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    DEBUG_GL(glTexParameteri);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    DEBUG_GL(glTexParameteri);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+            GL_NEAREST);
+    DEBUG_GL(glTexParameteri);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+            GL_NEAREST);
+    DEBUG_GL(glTexParameteri);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 2, 2,
+        0, GL_RGBA, GL_UNSIGNED_BYTE, tex);
+    DEBUG_GL(glTexImage2D);
+}
+
+static void init_threads(int thread_count, fz_context *context) {
+    int i;
+    int err;
+    size_t stack_size;
+    pthread_attr_t attr;
+
+    /* Fetch current stacksize */
+    pthread_attr_init(&attr);
+    pthread_attr_getstacksize(&attr, &stack_size);
+    printf("Default stack size: %zu\n", stack_size);
+
+    /* Ensure at least 1MB of stacksize */
+    if (stack_size < 1048576) {
+        stack_size = 1048576;
+        printf("Changing to %zu\n", stack_size);
+        pthread_attr_setstacksize(&attr, stack_size);
+    } else {
+        puts("This stack size is okay.");
+    }
+
+    threads = malloc(sizeof(struct least_thread) * thread_count);
+    idle_threads = malloc(sizeof(struct least_thread*) * thread_count);
+
+    for (i = 0; i < thread_count; i++) {
+        /* Setup sync */
+        pthread_cond_init(&threads[i].cond, NULL);
+        pthread_mutex_init(&threads[i].mutex, NULL);
+
+        /* Thread ID */
+        threads[i].id = i;
+
+        /* Setup loop and context */
+        threads[i].context = context;
+        threads[i].keep_running = 1;
+
+        err = pthread_create(&threads[i].tid, &attr, render_thread,
+            (void*)(threads + i));
+        if (err) {
+            errno = err;
+            perror("Creating render thread failed");
+            abort();
+        }
+
+        idle_threads[thread_count - i - 1] = threads + i;
+    }
+
+    idle_thread_count = thread_count;
+
+    pthread_attr_destroy(&attr);
+
+    return;
+}
+
+/* Initialises mutexes required for Fitz locking */
+static void init_least_context_locks(void)
+{
+    int i, err;
+
+    for (i = 0; i < FZ_LOCK_MAX; i++) {
+        err = pthread_mutex_init(least_lock_list + i, NULL);
+        if (err) {
+            errno = err;
+            perror("Mutex initialisation failed");
+            abort();
+        }
+    }
+
+    return;
+}
+
+static void schedule_page(int pagenum)
+{
+    struct least_thread *t = idle_threads[--idle_thread_count];
+
+    /* Mark page in progress */
+    pages[pagenum].rendering = 1;
+
+    /* Configure thread */
+    t->pagenum = pagenum;
+    t->scale = ims;
+    t->pre_refresh = 0;
+
+    /* Start rendering */
+    pthread_mutex_lock(&t->mutex);
+    pthread_cond_signal(&t->cond);
+    pthread_mutex_unlock(&t->mutex);
+
+    return;
+}
+
+/* This function updates cache state if necessary
+ *
+ * It schedules render jobs en removes pages no longer
+ * needed.
+ *
+ * The cache currently uses the scroll variable for computing
+ * the focus page.
+ */
+void update_cache(void)
+{
+    int i;
+    int
+        c_start,
+        c_stop;
+    int kills_left = idle_thread_count;
+
+    /* Compute page_focus */
+    if (scroll > 0.) {
+        page_focus = 0;
+    } else {
+        /* Page focus should be on the page occupying most of the display
+         *
+         * Every page takes up imh + 20 units of space in between.
+         * Split the window in 2 to scroll to the middle of the window.
+         * Finally add 10 units of scroll, because only 10 of the 20 units
+         * space belong the page on top of the window. This should create
+         * satisfying focus behaviour.
+         */
+        page_focus = (-scroll + (h / 2) + 10) / (imh + 20);
+        if (page_focus >= (int)pagec)
+            page_focus = pagec - 1;
+    }
+
+    /* Compute sliding cache window */
+    c_start = page_focus - (pages_to_cache - 1) / 2;
+    if (c_start < 0)
+        c_start = 0;
+
+    c_stop = c_start + pages_to_cache;
+    if (c_stop > (int)pagec) {
+        c_stop = pagec;
+        c_start = c_stop - pages_to_cache;
+        if (c_start < 0)
+            c_start = 0;
+    }
+
+#if 0
+    printf("Page focus is: %d\n", page_focus);
+    printf("Current cache window: [%d, %d)\n", c_start, c_stop);
+    printf("Idle thread count: %d\n", idle_thread_count);
+#endif
+
+    /* First kill unnecessary pages in cache */
+    for (i = 0; i < c_start && kills_left; i++) {
+        if (pages[i].texture) {
+            printf("cache: Killing page %d\n", i);
+            glDeleteTextures(1, &pages[i].texture);
+            pages[i].texture = 0;
+            kills_left--;
+        }
+    }
+
+    for (i = c_stop; i < (int)pagec && kills_left; i++) {
+        if (pages[i].texture) {
+            printf("cache: Killing page %d\n", i);
+            glDeleteTextures(1, &pages[i].texture);
+            pages[i].texture = 0;
+            kills_left--;
+        }
+    }
+
+    /* Schedule new pages */
+    for (i = c_start; i < c_stop && idle_thread_count; i++) {
+        if (!pages[i].texture && !pages[i].rendering) {
+            printf("cache: Scheduling page %d\n", i);
+            schedule_page(i);
+        }
+    }
+}
+
+/* This function completes a rendering job.
+ *
+ * The thread is added to the pool of idle threads.
+ */
+static void finish_page_render(struct least_thread *render)
+{
+    union _dispose_volatile {
+        volatile fz_pixmap *volatile_pixmap;
+        fz_pixmap *pixmap;
+    } d;
+
+    d.volatile_pixmap = render->pixmap;
+
+    /* XXX Error handling ? */
+    if (render->pre_refresh)
+        printf("finish_page: Discarding pre-refresh render "
+            "of page %d by thread %d\n", render->pagenum, render->id);
+    else {
+        /* Page is complete and no longer rendering */
+        pages[render->pagenum].rendering = 0;
+
+        /* Convert to texture */
+        pages[render->pagenum].texture = pixmap_to_texture(
+            (void*)fz_pixmap_samples(render->context, d.pixmap),
+            fz_pixmap_width(render->context, d.pixmap),
+            fz_pixmap_height(render->context, d.pixmap), 0, 0);
+    }
+
+    /* XXX Using the threads context might not be a gr8 idea */
+    fz_drop_pixmap(render->context, d.pixmap);
+
+    /* Place thread into idle pool */
+    idle_threads[idle_thread_count++] = render;
+}
+
 int main (int argc, char **argv) {
     fz_context *context;
+    int *pageinfo = NULL;
+    /* int i; */
 
-    context = fz_new_context(NULL, NULL, FZ_STORE_DEFAULT);
+    /* Initialises mutexes required for Fitz locking */
+    init_least_context_locks();
+
+    context = fz_new_context(NULL, &least_context_locks, FZ_STORE_DEFAULT);
     if (!context)
         fprintf(stderr, "Failed to create context\n");
+
+    if (force_thread_count)
+        thread_count = force_thread_count;
+    else
+        thread_count = sysconf(_SC_NPROCESSORS_ONLN);
 
     if (argc == 2) {
         /* Initialize OpenGL window */
         setup_sdl();
+
+        /* Start render threads */
+        init_threads(thread_count, context);
 
         /*
          * At this point, we should have a properly setup
          * double-buffered window for use with OpenGL.
          */
         setup_opengl(w, h);
+        init_busy_texture();
 
         /* Check for non-power-of-two support */
         /* printf("Extensions are: %s\n", glGetString(GL_EXTENSIONS)); */
@@ -727,19 +1333,22 @@ int main (int argc, char **argv) {
             /* Process incoming events. */
             process_events();
 
+            /* Update cache state */
+            update_cache();
+
             if (redraw) {
-                /*
-                glDeleteTextures(pagec, pages);
-                open_pdf(context, argv[1]);
-                */
                 redraw = 0;
                 draw_screen();
             }
+
+            free(pageinfo);
         }
+
 
     }
 
 
+    fz_close_document(doc);
     fz_free_context(context);
 
     return 0;
