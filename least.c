@@ -443,6 +443,11 @@ static void handle_key_down(SDL_keysym * keysym)
         redraw = 1;
         break;
 
+	case SDLK_HOME:
+		scroll = 0;
+		redraw = 1;
+		break;
+
     case SDLK_F5:
         printf("refresh: Killing cache\n");
 
