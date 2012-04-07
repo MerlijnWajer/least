@@ -399,7 +399,7 @@ static void quit_tutorial(int code)
     for (i = 0; i < pagec; i++)
         glDeleteTextures(1, &pages[i].texture);
 
-	exit(code);
+    exit(code);
 }
 
 static void handle_key_up(SDL_keysym * keysym) {
@@ -420,10 +420,10 @@ static void handle_key_down(SDL_keysym * keysym)
 {
     unsigned int i;
 
-	switch (keysym->sym) {
-	case SDLK_ESCAPE:
-		quit_tutorial(0);
-		break;
+    switch (keysym->sym) {
+    case SDLK_ESCAPE:
+        quit_tutorial(0);
+        break;
 
     case SDLK_DOWN:
         key_button_down |= LEAST_KEY_DOWN;
@@ -443,15 +443,15 @@ static void handle_key_down(SDL_keysym * keysym)
         redraw = 1;
         break;
 
-	case SDLK_HOME:
-		scroll = 0;
-		redraw = 1;
-		break;
+    case SDLK_HOME:
+        scroll = 0;
+        redraw = 1;
+        break;
 
-	case SDLK_END:
-		scroll = -(imh + 20) * (pagec - 1);
-		redraw = 1;
-		break;
+    case SDLK_END:
+        scroll = -(imh + 20) * (pagec - 1);
+        redraw = 1;
+        break;
 
     case SDLK_F5:
         printf("refresh: Killing cache\n");
@@ -498,9 +498,9 @@ static void handle_key_down(SDL_keysym * keysym)
         redraw = 1;
         break;
 
-	default:
-		break;
-	}
+    default:
+        break;
+    }
 }
 
 static void handle_mouse_down(SDL_MouseButtonEvent *event) {
@@ -567,10 +567,10 @@ static void handle_mouse_motion(SDL_MouseMotionEvent *event) {
 }
 
 static void toggle_fullscreen(void) {
-	const SDL_VideoInfo *info = NULL;
-	info = SDL_GetVideoInfo();
+    const SDL_VideoInfo *info = NULL;
+    info = SDL_GetVideoInfo();
 
-	if (!info) {
+    if (!info) {
         puts("Oops - can't get video info");
     }
 
@@ -605,49 +605,49 @@ static void handle_resize(SDL_ResizeEvent e) {
 
 static void setup_opengl(int width, int height)
 {
-	/* float ratio = (float)width / (float)height; */
+    /* float ratio = (float)width / (float)height; */
 
-	/* Our shading model--Gouraud (smooth). */
-	glShadeModel(GL_SMOOTH);
+    /* Our shading model--Gouraud (smooth). */
+    glShadeModel(GL_SMOOTH);
 
-	glEnable(GL_TEXTURE_2D);
+    glEnable(GL_TEXTURE_2D);
 
-	/* Set the clear color. */
-	glClearColor(0, 0, 0, 0);
+    /* Set the clear color. */
+    glClearColor(0, 0, 0, 0);
 
-	/* Setup our viewport. */
-	glViewport(0, 0, width, height);
+    /* Setup our viewport. */
+    glViewport(0, 0, width, height);
 
-	glLoadIdentity();
+    glLoadIdentity();
 }
 
 int setup_sdl(void)
 {
-	/* Information about the current video settings. */
-	const SDL_VideoInfo *info = NULL;
+    /* Information about the current video settings. */
+    const SDL_VideoInfo *info = NULL;
 
-	/* Color depth in bits of our window. */
-	int bpp = 0;
+    /* Color depth in bits of our window. */
+    int bpp = 0;
 
-	/* Flags we will pass into SDL_SetVideoMode. */
+    /* Flags we will pass into SDL_SetVideoMode. */
     int flags = 0;
 
-	/* First, initialize SDL's video subsystem. */
-	if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-		/* Failed, exit. */
-		fprintf(stderr, "Video initialization failed: %s\n",
-			SDL_GetError());
-		quit_tutorial(1);
-	}
+    /* First, initialize SDL's video subsystem. */
+    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+        /* Failed, exit. */
+        fprintf(stderr, "Video initialization failed: %s\n",
+            SDL_GetError());
+        quit_tutorial(1);
+    }
 
-	/* Let's get some video information. */
-	info = SDL_GetVideoInfo();
+    /* Let's get some video information. */
+    info = SDL_GetVideoInfo();
 
-	if (!info) {
-		/* This should probably never happen. */
-		fprintf(stderr, "Video query failed: %s\n", SDL_GetError());
-		quit_tutorial(1);
-	}
+    if (!info) {
+        /* This should probably never happen. */
+        fprintf(stderr, "Video query failed: %s\n", SDL_GetError());
+        quit_tutorial(1);
+    }
 
     /* Store current width and height, and more importantly
      * store GL backbuffer size
@@ -656,54 +656,54 @@ int setup_sdl(void)
     gl_h = h = info->current_h;
     printf("W, H: (%f, %f)\n", w, h);
 
-	bpp = info->vfmt->BitsPerPixel;
+    bpp = info->vfmt->BitsPerPixel;
 
-	/*
-	 * Now, we want to setup our requested
-	 * window attributes for our OpenGL window.
-	 * We want *at least* 5 bits of red, green
-	 * and blue. We also want at least a 16-bit
-	 * depth buffer.
-	 *
-	 * The last thing we do is request a double
-	 * buffered window. '1' turns on double
-	 * buffering, '0' turns it off.
-	 *
-	 * Note that we do not use SDL_DOUBLEBUF in
-	 * the flags to SDL_SetVideoMode. That does
-	 * not affect the GL attribute state, only
-	 * the standard 2D blitting setup.
-	 */
-	SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 5);
-	SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 5);
-	SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 5);
-	SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 16);
-	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    /*
+     * Now, we want to setup our requested
+     * window attributes for our OpenGL window.
+     * We want *at least* 5 bits of red, green
+     * and blue. We also want at least a 16-bit
+     * depth buffer.
+     *
+     * The last thing we do is request a double
+     * buffered window. '1' turns on double
+     * buffering, '0' turns it off.
+     *
+     * Note that we do not use SDL_DOUBLEBUF in
+     * the flags to SDL_SetVideoMode. That does
+     * not affect the GL attribute state, only
+     * the standard 2D blitting setup.
+     */
+    SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 5);
+    SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 5);
+    SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 5);
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 16);
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
-	/* flags = SDL_OPENGL | SDL_FULLSCREEN; */
-	flags = SDL_OPENGL | SDL_RESIZABLE | SDL_DOUBLEBUF;
-	/* flags = SDL_OPENGL; */
+    /* flags = SDL_OPENGL | SDL_FULLSCREEN; */
+    flags = SDL_OPENGL | SDL_RESIZABLE | SDL_DOUBLEBUF;
+    /* flags = SDL_OPENGL; */
     surface = SDL_SetVideoMode(w, h, bpp, flags);
-	if (!surface) {
-		/*
-		 * This could happen for a variety of reasons,
-		 * including DISPLAY not being set, the specified
-		 * resolution not being available, etc.
-		 */
-		fprintf(stderr, "Video mode set failed: %s\n", SDL_GetError());
-		quit_tutorial(1);
-	}
+    if (!surface) {
+        /*
+         * This could happen for a variety of reasons,
+         * including DISPLAY not being set, the specified
+         * resolution not being available, etc.
+         */
+        fprintf(stderr, "Video mode set failed: %s\n", SDL_GetError());
+        quit_tutorial(1);
+    }
 
 
     SDL_WM_SetCaption("least", "least");
 
-	return 0;
+    return 0;
 }
 
 static void process_events(void)
 {
-	/* Our SDL event placeholder. */
-	SDL_Event event;
+    /* Our SDL event placeholder. */
+    SDL_Event event;
 
     /* Only poll + sleep if we are autoscrolling or doing
      * something else that is interactive */
@@ -863,7 +863,7 @@ static void draw_screen(void)
     ww = imw;
     hh = imh;
 
-	glEnable(GL_TEXTURE_2D);
+    glEnable(GL_TEXTURE_2D);
 
     glMatrixMode(GL_TEXTURE);
     glLoadIdentity();
@@ -880,15 +880,15 @@ static void draw_screen(void)
         ttm = 8;
     }
 
-	glClearColor(0.5f, 0.5f, 0.5f, 0.0f);
-	glViewport(0, 0, (int)w, (int)gl_h);
+    glClearColor(0.5f, 0.5f, 0.5f, 0.0f);
+    glViewport(0, 0, (int)w, (int)gl_h);
     /* glViewport(0, 0, 400, 400); */
-	glClear(GL_COLOR_BUFFER_BIT);
-	glMatrixMode(GL_PROJECTION);
-	glLoadIdentity();
-	glOrtho(0.0f, (int)w, (int)gl_h, 0, -1.0f, 1.0f);
-	glMatrixMode(GL_MODELVIEW);
-	glLoadIdentity();
+    glClear(GL_COLOR_BUFFER_BIT);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0.0f, (int)w, (int)gl_h, 0, -1.0f, 1.0f);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
 
     /*
     vloot += 0.1;
@@ -959,17 +959,17 @@ static void draw_screen(void)
         }
     }
 
-	/*
-	 * Swap the buffers. This this tells the driver to
-	 * render the next frame from the contents of the
-	 * back-buffer, and to set all rendering operations
-	 * to occur on what was the front-buffer.
-	 *
-	 * Double buffering prevents nasty visual tearing
-	 * from the application drawing on areas of the
-	 * screen that are being updated at the same time.
-	 */
-	SDL_GL_SwapBuffers();
+    /*
+     * Swap the buffers. This this tells the driver to
+     * render the next frame from the contents of the
+     * back-buffer, and to set all rendering operations
+     * to occur on what was the front-buffer.
+     *
+     * Double buffering prevents nasty visual tearing
+     * from the application drawing on areas of the
+     * screen that are being updated at the same time.
+     */
+    SDL_GL_SwapBuffers();
 }
 
 /* XXX Error handling :-( */
