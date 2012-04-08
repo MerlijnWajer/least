@@ -19,6 +19,8 @@ SDL/GL Frontend:
         -   Hyperlinks
 
     -   Page markers (like vim)
+    -   Vim-like keys. [0..9*][h,j,k,l]
+    -   Text search. (With '/')
 
     -   Annotations: [TODO]
         -   Turn on/off annotation hints

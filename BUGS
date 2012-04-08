@@ -1,3 +1,13 @@
 -   Fullscreen works via F11 (our own event) only, not using window manager
 event. (At least not in awesome)
+
+-   ``Scroll'' variable is a poor way of representing the current page count
+etc. It should be representated as a certain percentage of a specific page, for
+example. That would allow us to deal with scaling properly.
+
 -   We don't properly handle PDFs with different page sizes.
+    To fix this, we need to get the size of each page in a PDF. This can take
+    some time. We can do this while showing the first page?
+
+-   To perform text search we need to know the text of all the pages.
+    Perhaps we can load this on start as well.
