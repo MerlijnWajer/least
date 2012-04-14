@@ -663,6 +663,8 @@ static void setup_opengl(int width, int height)
 	glShadeModel(GL_SMOOTH);
 
 	glEnable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 	/* Set the clear color. */
 	glClearColor(0, 0, 0, 0);
@@ -963,7 +965,7 @@ static void draw_screen(void)
         /*printf("page_offset: %d\n", page_offset); */
         /*printf("pages_rendered: %d\n", pages_rendered);*/
 
-        glColor3f(1.0, 1.0, 1.0);
+        glColor4f(1.0, 1.0, 1.0, 1.0);
         for (i = page_offset; i < page_offset + pages_rendered &&
                 i < pagec; i++) {
             /* printf("Page: %d, size: (%f, %f)\n", i, imw, imh); */
@@ -1015,7 +1017,7 @@ static void draw_screen(void)
 
     if (selecting && selx1 && sely1) {
         glLoadIdentity();
-        glColor3f(0.7f, 0.7f, 0.7f);
+        glColor4f(0.7f, 0.7f, 0.7f, 0.5f);
         glTranslatef(selx0, sely0, 0.f);
 
         glBegin(GL_QUADS);
