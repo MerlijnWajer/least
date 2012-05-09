@@ -6,7 +6,6 @@
 #include "mupdf/pdf/mupdf.h"
 
 #include <sys/types.h>
-#include <pthread.h>
 #include <unistd.h>
 #include <math.h>
 
@@ -15,7 +14,7 @@ static float
     lw, lh,         /* Locked window dimension globals (texture generation) */
     gl_w, gl_h;     /* GL Backbuffer dimensions globals */
 
-SDL_Surface *surface;
+static SDL_Surface *surface;
 
 static float imw, imh, ims;
 
@@ -71,7 +70,7 @@ static unsigned int pagec;
 static struct least_page_info *pages;
 
 /* Cache settings */
-static const int pages_to_cache = 16;
+static const int pages_to_cache = 6;
 static int page_focus = 0;
 
 /* Cache busy texture */
@@ -81,16 +80,17 @@ static GLuint busy_texture;
 #define LEAST_PAGE_COMPLETE (SDL_USEREVENT + 1)
 
 /* 'base_context' lock, see explanation in least_thread structure */
-static pthread_mutex_t big_fitz_lock = PTHREAD_MUTEX_INITIALIZER;
+static SDL_mutex *big_fitz_lock = NULL;
 
 /* Every thread is tracked by this structure */
 struct least_thread {
     /* Communication synchronisation */
-    pthread_cond_t cond;
-    pthread_mutex_t mutex;
+    SDL_cond *cond;
+    SDL_mutex *mutex;
 
     /* Thread ID */
-    pthread_t tid;
+    SDL_Thread *handle;
+    Uint32 tid;
     int id;
 
     /* Fitz base_context and context.
@@ -118,25 +118,25 @@ static struct least_thread **idle_threads;
 static int idle_thread_count;
 
 /* Fitz lock support */
-static pthread_mutex_t least_lock_list[FZ_LOCK_MAX];
+static SDL_mutex *least_lock_list[FZ_LOCK_MAX];
 
 static void least_lock(void *user, int lock) {
     int err;
-    pthread_mutex_t *m = user;
-    err = pthread_mutex_lock(&m[lock]);
+    SDL_mutex **m = user;
+    err = SDL_mutexP(m[lock]);
     if (err) {
-        fprintf(stderr, "During fitz lock %d", lock);
-        perror("");
+        fprintf(stderr, "During fitz lock %d, SDL error occurred: %s\n", lock,
+            SDL_GetError());
     }
 }
 
 static void least_unlock(void *user, int lock) {
     int err;
-    pthread_mutex_t *m = user;
-    err = pthread_mutex_unlock(&m[lock]);
+    SDL_mutex **m = user;
+    err = SDL_mutexV(m[lock]);
     if (err) {
-        fprintf(stderr, "During fitz lock %d", lock);
-        perror("");
+        fprintf(stderr, "During fitz lock %d, SDL error occurred: %s\n", lock,
+            SDL_GetError());
     }
 }
 
@@ -264,7 +264,7 @@ static fz_pixmap *page_to_pixmap(fz_context *context,
      *
      * XXX: Introduce mutex error checking?
      */
-    pthread_mutex_lock(&big_fitz_lock);
+    SDL_mutexP(big_fitz_lock);
     {
         page = fz_load_page(doc, pagenum);
 
@@ -301,7 +301,7 @@ static fz_pixmap *page_to_pixmap(fz_context *context,
         fz_run_page(doc, page, dev, fz_identity, NULL);
         fz_free_device(dev);
     }
-    pthread_mutex_unlock(&big_fitz_lock);
+    SDL_mutexV(big_fitz_lock);
 
     /* Perform actual drawing in parallel */
     dev = fz_new_draw_device(thread_context, image);
@@ -314,12 +314,12 @@ static fz_pixmap *page_to_pixmap(fz_context *context,
      * At least this seems to be the case looking at
      * MuPDFs multithreading example.
      */
-    pthread_mutex_lock(&big_fitz_lock);
+    SDL_mutexP(big_fitz_lock);
     {
         fz_free_display_list(context, list);
         fz_free_page(doc, page);
     }
-    pthread_mutex_unlock(&big_fitz_lock);
+    SDL_mutexV(big_fitz_lock);
 
     return image;
 }
@@ -841,13 +841,16 @@ next_event:
 }
 
 /* Render thread entry */
-static void *render_thread(void *t)
+static int render_thread(void *t)
 {
     SDL_Event my_event;
     struct least_thread *self = t;
 
     my_event.type = LEAST_PAGE_COMPLETE;
     my_event.user.data1 = t;
+
+    /* Store local SDL thread ID (Is this function thread safe? ;-) */
+    self->tid = SDL_ThreadID();
 
     self->context = fz_clone_context(self->base_context);
     if (!self->context) {
@@ -857,9 +860,9 @@ static void *render_thread(void *t)
     }
 
     printf("Render thread %d up and running.\n", self->id);
-    pthread_mutex_lock(&self->mutex);
+    SDL_mutexP(self->mutex);
     /* Wait for first command */
-    pthread_cond_wait(&self->cond, &self->mutex);
+    SDL_CondWait(self->cond, self->mutex);
 
     while (self->keep_running) {
 
@@ -876,15 +879,15 @@ static void *render_thread(void *t)
         /* Push completed page to event queue */
         SDL_PushEvent(&my_event);
 
-        pthread_cond_wait(&self->cond, &self->mutex);
+        SDL_CondWait(self->cond, self->mutex);
     }
 
-    pthread_mutex_unlock(&self->mutex);
+    SDL_mutexV(self->mutex);
 
     /* Cleanup */
     fz_free_context(self->context);
 
-    return NULL;
+    return 0;
 }
 
 static void draw_screen(void)
@@ -1047,9 +1050,10 @@ static void init_busy_texture() {
 
 static void init_threads(int thread_count, fz_context *context) {
     int i;
-    int err;
-    size_t stack_size;
-    pthread_attr_t attr;
+
+#if 0 /* Unfortunately SDL does not support changing of thread stack size.
+       * Let's have some faith in their default settings then. ;-)
+       */
 
     /* Fetch current stacksize */
     pthread_attr_init(&attr);
@@ -1064,14 +1068,24 @@ static void init_threads(int thread_count, fz_context *context) {
     } else {
         puts("This stack size is okay.");
     }
+#endif
 
     threads = malloc(sizeof(struct least_thread) * thread_count);
     idle_threads = malloc(sizeof(struct least_thread*) * thread_count);
 
     for (i = 0; i < thread_count; i++) {
         /* Setup sync */
-        pthread_cond_init(&threads[i].cond, NULL);
-        pthread_mutex_init(&threads[i].mutex, NULL);
+        threads[i].cond  = SDL_CreateCond();
+        if (!threads[i].cond) {
+            fprintf(stderr, "Creating condition failed: %s\n", SDL_GetError());
+            abort();
+        }
+        threads[i].mutex = SDL_CreateMutex();
+        if (!threads[i].mutex) {
+            fprintf(stderr, "Creating mutex failed: %s\n", SDL_GetError());
+            abort();
+        }
+
 
         /* Thread ID */
         threads[i].id = i;
@@ -1090,11 +1104,10 @@ static void init_threads(int thread_count, fz_context *context) {
         }
         #endif
 
-        err = pthread_create(&threads[i].tid, &attr, render_thread,
+        threads[i].handle = SDL_CreateThread(render_thread,
             (void*)(threads + i));
-        if (err) {
-            errno = err;
-            perror("Creating render thread failed");
+        if (!threads[i].handle) {
+            fprintf(stderr, "Creating thread failed: %s\n", SDL_GetError());
             abort();
         }
 
@@ -1103,21 +1116,27 @@ static void init_threads(int thread_count, fz_context *context) {
 
     idle_thread_count = thread_count;
 
-    pthread_attr_destroy(&attr);
-
     return;
 }
 
 /* Initialises mutexes required for Fitz locking */
 static void init_least_context_locks(void)
 {
-    int i, err;
+    int i;
+
+    /* Initialise the Big Fitz Lock */
+    big_fitz_lock = SDL_CreateMutex();
+    if (!big_fitz_lock) {
+        fprintf(stderr, "Mutex initialisation failed: %s\n",
+            SDL_GetError());
+        abort();
+    }
 
     for (i = 0; i < FZ_LOCK_MAX; i++) {
-        err = pthread_mutex_init(least_lock_list + i, NULL);
-        if (err) {
-            errno = err;
-            perror("Mutex initialisation failed");
+        least_lock_list[i] = SDL_CreateMutex();
+        if (!least_lock_list[i]) {
+            fprintf(stderr, "Mutex initialisation failed: %s\n",
+                SDL_GetError());
             abort();
         }
     }
@@ -1138,9 +1157,9 @@ static void schedule_page(int pagenum)
     t->pre_refresh = 0;
 
     /* Start rendering */
-    pthread_mutex_lock(&t->mutex);
-    pthread_cond_signal(&t->cond);
-    pthread_mutex_unlock(&t->mutex);
+    SDL_mutexP(t->mutex);
+    SDL_CondSignal(t->cond);
+    SDL_mutexV(t->mutex);
 
     return;
 }
