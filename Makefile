@@ -14,7 +14,9 @@ debug: least
 release: CFLAGS += -O2
 release: least
 
-least: least.c
+LEAST_OS=least.o
+
+least: $(LEAST_OS)
 	$(CC) least.c $(CFLAGS) $(LIBS) -o least mupdf/build/debug/libfitz.a
 
 clean:
