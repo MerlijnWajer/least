@@ -7,6 +7,8 @@ Backend:
 
     -   On demand rendering / pixmap cache.
 
+fbcon support (with sdl)!
+
 SDL/GL Frontend:
     -   Smooth scrolling [DONE]
     -   Dragging with RMB [DONE]
