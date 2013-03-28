@@ -2,8 +2,13 @@
 #include <GL/gl.h>
 #include <GL/glu.h>
 
+#include <fitz.h>
+#include <mupdf.h>
+
+#if 0
 #include "mupdf/fitz/fitz.h"
 #include "mupdf/pdf/mupdf.h"
+#endif
 
 #include <sys/types.h>
 #include <unistd.h>
@@ -208,7 +213,7 @@ int open_pdf(fz_context *context, char *filename) {
     fz_try(context) {
         file = fz_open_file(context, filename);
 
-        doc = (fz_document *) pdf_open_document_with_stream(file);
+        doc = (fz_document *) pdf_open_document_with_stream(context, file);
 
         /* TODO Password */
 
@@ -253,7 +258,7 @@ static fz_pixmap *page_to_pixmap(fz_context *context,
     fz_pixmap *image;
     fz_device *dev;
     fz_rect bounds;
-    fz_bbox bbox;
+    fz_irect bbox;
     fz_matrix ctm;
     float scale;
 
@@ -268,7 +273,7 @@ static fz_pixmap *page_to_pixmap(fz_context *context,
     {
         page = fz_load_page(doc, pagenum);
 
-        bounds = fz_bound_page(doc, page);
+        fz_bound_page(doc, page, &bounds);
 
         /* XXX: There is a small risk of lw/lh being incorrect
          * due to a race condition during a refresh.
@@ -279,7 +284,7 @@ static fz_pixmap *page_to_pixmap(fz_context *context,
         printf("W, H: (%f, %f)\n", lw, lh);
         printf("Scale: %f\n", scale);
 
-        ctm = fz_scale(scale, scale);
+        fz_scale(&ctm, scale, scale);
 
         pages[pagenum].w = bounds.x1;
         pages[pagenum].h = bounds.y1;
@@ -290,15 +295,15 @@ static fz_pixmap *page_to_pixmap(fz_context *context,
         pages[pagenum].sw = bounds.x1;
         pages[pagenum].sh = bounds.y1;
 
-        bbox = fz_round_rect(bounds);
+        fz_round_rect(&bbox, &bounds);
         printf("Size: (%d, %d)\n", bbox.x1, bbox.y1);
 
 
         list = fz_new_display_list(context);
-        image = fz_new_pixmap_with_bbox(context, fz_device_rgb, bbox);
+        image = fz_new_pixmap_with_bbox(context, fz_device_rgb, &bbox);
         dev = fz_new_list_device(context, list);
         /* fz_run_page(doc, page, dev, ctm, NULL); */
-        fz_run_page(doc, page, dev, fz_identity, NULL);
+        fz_run_page(doc, page, dev, &fz_identity, NULL);
         fz_free_device(dev);
     }
     SDL_mutexV(big_fitz_lock);
@@ -306,7 +311,11 @@ static fz_pixmap *page_to_pixmap(fz_context *context,
     /* Perform actual drawing in parallel */
     dev = fz_new_draw_device(thread_context, image);
     fz_clear_pixmap_with_value(thread_context, image, 255);
-    fz_run_display_list(list, dev, ctm, bbox, NULL);
+
+    /* XXX: Before mupdf >=1.2 it was:
+     * fz_run_display_list(list, dev, &ctm, &bbox, NULL);*/
+    fz_run_display_list(list, dev, &ctm, &bounds, NULL);
+
     fz_free_device(dev);
 
     /* Since some allocating was done using the main context
@@ -378,6 +387,9 @@ static int pixmap_to_texture(void *pixmap, int width, int height, int format, in
 {
     unsigned int texname;
     /* int max_texsize; */
+
+    (void)format;
+    (void)type;
 
     int pow2_width, pow2_height;
 

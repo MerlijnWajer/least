@@ -17,7 +17,8 @@ release: least
 LEAST_OS=least.o
 
 least: $(LEAST_OS)
-	$(CC) least.c $(CFLAGS) $(LIBS) -o least mupdf/build/debug/libfitz.a
+	$(CC) least.c $(CFLAGS) $(LIBS) -o least -lfitz
+	#$(CC) least.c $(CFLAGS) $(LIBS) -o least mupdf/build/debug/libfitz.a
 
 clean:
 	rm least
