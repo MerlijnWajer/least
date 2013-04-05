@@ -468,9 +468,11 @@ static void quit_tutorial(int code)
 static void handle_key_up(SDL_keysym * keysym) {
     switch (keysym->sym) {
         case SDLK_DOWN:
+        case SDLK_j:
             key_button_down &= ~(LEAST_KEY_DOWN);
             break;
         case SDLK_UP:
+        case SDLK_k:
             key_button_down &= ~(LEAST_KEY_UP);
             break;
         default:
@@ -489,10 +491,12 @@ static void handle_key_down(SDL_keysym * keysym)
         break;
 
     case SDLK_DOWN:
+    case SDLK_j:
         key_button_down |= LEAST_KEY_DOWN;
         break;
 
     case SDLK_UP:
+    case SDLK_k:
         key_button_down |= LEAST_KEY_UP;
         break;
 
