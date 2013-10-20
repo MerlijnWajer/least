@@ -1,6 +1,8 @@
 #include <SDL/SDL.h>
 #include <GL/gl.h>
+#if 0
 #include <GL/glu.h>
+#endif
 
 #include <mupdf/fitz.h>
 #include <mupdf/pdf.h>
