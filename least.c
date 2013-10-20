@@ -2,8 +2,8 @@
 #include <GL/gl.h>
 #include <GL/glu.h>
 
-#include "mupdf/fitz/fitz.h"
-#include "mupdf/pdf/mupdf.h"
+#include <mupdf/fitz.h>
+#include <mupdf/pdf.h>
 
 #include <sys/types.h>
 #include <unistd.h>
@@ -255,6 +255,7 @@ static fz_pixmap *page_to_pixmap(fz_context *context,
     fz_rect bounds;
     fz_irect bbox;
     fz_matrix ctm;
+    fz_colorspace *cspace;
     float scale;
 
     printf("Rendering page %d\n", pagenum);
@@ -295,7 +296,8 @@ static fz_pixmap *page_to_pixmap(fz_context *context,
 
 
         list = fz_new_display_list(context);
-        image = fz_new_pixmap_with_bbox(context, fz_device_rgb, &bbox);
+        cspace = fz_device_rgb(context);
+        image = fz_new_pixmap_with_bbox(context, cspace, &bbox);
         dev = fz_new_list_device(context, list);
         /* fz_run_page(doc, page, dev, ctm, NULL); */
         fz_run_page(doc, page, dev, &fz_identity, NULL);
@@ -320,7 +322,7 @@ static fz_pixmap *page_to_pixmap(fz_context *context,
      */
     SDL_mutexP(big_fitz_lock);
     {
-        fz_free_display_list(context, list);
+        fz_drop_display_list(context, list);
         fz_free_page(doc, page);
     }
     SDL_mutexV(big_fitz_lock);
