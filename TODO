@@ -1,3 +1,9 @@
+Fixes:
+
+    - Check commit a154a6b and the one before that for proper mupdf 1.3
+    compatibility. Mainly the drop/free display lists.
+
+
 Backend:
     -   Write API for multiple graphical frontends
     -   Text selection & searching.
@@ -20,17 +26,19 @@ SDL/GL Frontend:
     -   Text selection [TODO]
         -   Hyperlinks
 
-    -   Page markers (like vim)
-    -   Vim-like keys. [0..9*][h,j,k,l]
-    -   Text search. (With '/')
+    -   Page markers (like vim) [TODO]
+    -   Vim-like keys. [0..9*][h,j,k,l] [PARTIALLY]
+    -   Text search. (With '/') [TODO]
 
     -   Annotations: [TODO]
         -   Turn on/off annotation hints
         -   Hover over annotation to completely see it? Render the text
         somewhere else?
 
-    -   Options frontend. (Drop down menu, a-la Quake)
+    -   Options frontend. (Drop down menu, a-la Quake) [TODO]
         -   Semi-transparent.
+        -   Python scriptable? (then we probably need to write a huge part in
+        Python - may be a good idea)
 
     -   Chapter overview.
 
