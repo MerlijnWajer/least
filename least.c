@@ -2,13 +2,8 @@
 #include <GL/gl.h>
 #include <GL/glu.h>
 
-#include <fitz.h>
-#include <mupdf.h>
-
-#if 0
 #include "mupdf/fitz/fitz.h"
 #include "mupdf/pdf/mupdf.h"
-#endif
 
 #include <sys/types.h>
 #include <unistd.h>
