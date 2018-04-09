@@ -214,7 +214,7 @@ int open_pdf(fz_context *context, char *filename) {
 
         /* TODO Password */
 
-        fz_close(file);
+        fz_drop_stream(context, file);
     } fz_catch (context) {
         fprintf(stderr, "Cannot open: %s\n", filename);
         faulty = 1;
@@ -224,7 +224,7 @@ int open_pdf(fz_context *context, char *filename) {
         return faulty;
 
     /* XXX need error handling */
-    pagec = fz_count_pages(doc);
+    pagec = fz_count_pages(context, doc);
     pages = malloc(sizeof(struct least_page_info) * pagec);
 
     #if 0
@@ -269,9 +269,9 @@ static fz_pixmap *page_to_pixmap(fz_context *context,
      */
     SDL_mutexP(big_fitz_lock);
     {
-        page = fz_load_page(doc, pagenum);
+        page = fz_load_page(context, doc, pagenum);
 
-        fz_bound_page(doc, page, &bounds);
+        fz_bound_page(context, page, &bounds);
 
         /* XXX: There is a small risk of lw/lh being incorrect
          * due to a race condition during a refresh.
@@ -297,25 +297,25 @@ static fz_pixmap *page_to_pixmap(fz_context *context,
         printf("Size: (%d, %d)\n", bbox.x1, bbox.y1);
 
 
-        list = fz_new_display_list(context);
+        list = fz_new_display_list(context, &bounds);
         cspace = fz_device_rgb(context);
-        image = fz_new_pixmap_with_bbox(context, cspace, &bbox);
+        image = fz_new_pixmap_with_bbox(context, cspace, &bbox, 1);
         dev = fz_new_list_device(context, list);
         /* fz_run_page(doc, page, dev, ctm, NULL); */
-        fz_run_page(doc, page, dev, &fz_identity, NULL);
-        fz_free_device(dev);
+        fz_run_page(context, page, dev, &fz_identity, NULL);
+        fz_drop_device(context, dev);
     }
     SDL_mutexV(big_fitz_lock);
 
     /* Perform actual drawing in parallel */
-    dev = fz_new_draw_device(thread_context, image);
+    dev = fz_new_draw_device(thread_context, &fz_identity, image);
     fz_clear_pixmap_with_value(thread_context, image, 255);
 
     /* XXX: Before mupdf >=1.2 it was:
      * fz_run_display_list(list, dev, &ctm, &bbox, NULL);*/
-    fz_run_display_list(list, dev, &ctm, &bounds, NULL);
+    fz_run_display_list(thread_context, list, dev, &ctm, &bounds, NULL);
 
-    fz_free_device(dev);
+    fz_drop_device(thread_context, dev);
 
     /* Since some allocating was done using the main context
      * we should also deallocate using the main context.
@@ -325,7 +325,7 @@ static fz_pixmap *page_to_pixmap(fz_context *context,
     SDL_mutexP(big_fitz_lock);
     {
         fz_drop_display_list(context, list);
-        fz_free_page(doc, page);
+        fz_drop_page(context, page);
     }
     SDL_mutexV(big_fitz_lock);
 
@@ -910,7 +910,7 @@ static int render_thread(void *t)
     SDL_mutexV(self->mutex);
 
     /* Cleanup */
-    fz_free_context(self->context);
+    fz_drop_context(self->context);
 
     return 0;
 }
@@ -1375,8 +1375,8 @@ int main (int argc, char **argv) {
     }
 
 
-    fz_close_document(doc);
-    fz_free_context(context);
+    fz_drop_document(context, doc);
+    fz_drop_context(context);
 
     return 0;
 }

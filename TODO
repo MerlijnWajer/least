@@ -1,3 +1,7 @@
+Upgrade:
+    - It seems Fitz has become much more multi-thread friendly now we've reached
+      MuPDF 1.11. We might even be able to completely remove the Big Fitz Lock.
+
 Fixes:
 
     - Check commit a154a6b and the one before that for proper mupdf 1.3
