@@ -1,4 +1,4 @@
-#include <SDL/SDL.h>
+#include <SDL2/SDL.h>
 #include <GL/gl.h>
 #if 0
 #include <GL/glu.h>
@@ -16,7 +16,8 @@ static float
     lw, lh,         /* Locked window dimension globals (texture generation) */
     gl_w, gl_h;     /* GL Backbuffer dimensions globals */
 
-static SDL_Surface *surface;
+static SDL_Window *window;
+static SDL_Renderer *renderer;
 
 static float imw, imh, ims;
 
@@ -39,7 +40,9 @@ static int autoscroll_var = 1;
 static int redraw = 1; /* Window dirty? */
 
 static int fullscreen = 0; /* Are fullscreen? */
+#if 0
 static int prev_w, prev_h; /* W, H before fullscreen */
+#endif
 
 /* Input settings */
 static int mouse_button_down = 0; /* Contains what mouse buttons are down */
@@ -464,7 +467,7 @@ static void quit_tutorial(int code)
     exit(code);
 }
 
-static void handle_key_up(SDL_keysym * keysym) {
+static void handle_key_up(SDL_Keysym * keysym) {
     switch (keysym->sym) {
         case SDLK_DOWN:
         case SDLK_j:
@@ -480,7 +483,7 @@ static void handle_key_up(SDL_keysym * keysym) {
 
 }
 
-static void handle_key_down(SDL_keysym * keysym)
+static void handle_key_down(SDL_Keysym * keysym)
 {
     unsigned int i;
 
@@ -552,8 +555,13 @@ static void handle_key_down(SDL_keysym * keysym)
         break;
 
     case SDLK_F11:
-        SDL_WM_ToggleFullScreen(surface);
         toggle_fullscreen();
+        /* XXX error handling */
+        if (fullscreen) {
+            SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN);
+        } else {
+            SDL_SetWindowFullscreen(window, 0);
+        }
         break;
 
     case SDLK_F12:
@@ -633,16 +641,17 @@ static void handle_mouse_motion(SDL_MouseMotionEvent *event) {
 }
 
 static void toggle_fullscreen(void) {
+#if 0
     const SDL_VideoInfo *info = NULL;
     info = SDL_GetVideoInfo();
 
     if (!info) {
         puts("Oops - can't get video info");
     }
-
     if (!fullscreen) {
         fullscreen = 1;
 
+I
         prev_w = w;
         prev_h = h;
 
@@ -654,17 +663,16 @@ static void toggle_fullscreen(void) {
         h = prev_h;
     }
 
-
+#endif
     redraw = 1;
 }
 
-static void handle_resize(SDL_ResizeEvent e) {
+static void handle_resize(SDL_WindowEvent e) {
     /* printf("Resized to (%d, %d)\n", e.w, e.h); */
-    w = e.w;
-    h = e.h;
+    w = e.data1;
+    h = e.data2;
 
     redraw = 1;
-
 
     return;
 }
@@ -689,11 +697,7 @@ static void setup_opengl(int width, int height)
 
 int setup_sdl(void)
 {
-    /* Information about the current video settings. */
-    const SDL_VideoInfo *info = NULL;
-
-    /* Color depth in bits of our window. */
-    int bpp = 0;
+    int width, height;
 
     /* Flags we will pass into SDL_SetVideoMode. */
     int flags = 0;
@@ -705,24 +709,6 @@ int setup_sdl(void)
             SDL_GetError());
         quit_tutorial(1);
     }
-
-    /* Let's get some video information. */
-    info = SDL_GetVideoInfo();
-
-    if (!info) {
-        /* This should probably never happen. */
-        fprintf(stderr, "Video query failed: %s\n", SDL_GetError());
-        quit_tutorial(1);
-    }
-
-    /* Store current width and height, and more importantly
-     * store GL backbuffer size
-     */
-    gl_w = w = info->current_w;
-    gl_h = h = info->current_h;
-    printf("W, H: (%f, %f)\n", w, h);
-
-    bpp = info->vfmt->BitsPerPixel;
 
     /*
      * Now, we want to setup our requested
@@ -747,10 +733,10 @@ int setup_sdl(void)
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
     /* flags = SDL_OPENGL | SDL_FULLSCREEN; */
-    flags = SDL_OPENGL | SDL_RESIZABLE | SDL_DOUBLEBUF;
+    flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
     /* flags = SDL_OPENGL; */
-    surface = SDL_SetVideoMode(w, h, bpp, flags);
-    if (!surface) {
+    SDL_CreateWindowAndRenderer(w, h, flags, &window, &renderer);
+    if (!window) {
         /*
          * This could happen for a variety of reasons,
          * including DISPLAY not being set, the specified
@@ -760,8 +746,21 @@ int setup_sdl(void)
         quit_tutorial(1);
     }
 
+    SDL_SetWindowTitle(window, "least");
 
-    SDL_WM_SetCaption("least", "least");
+    /* Fetch window size */
+    /*
+    SDL_GetWindowSize(window, &width, &height);
+    */
+    width = 1280;
+    height = 768;
+
+    /* Store current width and height, and more importantly
+     * store GL backbuffer size
+     */
+    gl_w = w = width;
+    gl_h = h = height;
+    printf("W, H: (%f, %f)\n", w, h);
 
     return 0;
 }
@@ -823,12 +822,19 @@ next_event:
         quit_tutorial(0);
         break;
 
-    case SDL_VIDEORESIZE:
-        handle_resize(event.resize);
-        break;
+    case SDL_WINDOWEVENT:
+        switch(event.window.event) {
+        case SDL_WINDOWEVENT_RESIZED:
+            handle_resize(event.window);
+            break;
 
-    case SDL_VIDEOEXPOSE:
-        redraw = 1;
+        case SDL_WINDOWEVENT_EXPOSED:
+            redraw = 1;
+            break;
+
+        default:;
+        }
+
         break;
 
     case SDL_MOUSEBUTTONDOWN:
@@ -1038,7 +1044,7 @@ static void draw_screen(void)
      * from the application drawing on areas of the
      * screen that are being updated at the same time.
      */
-    SDL_GL_SwapBuffers();
+    SDL_GL_SwapWindow(window);
 }
 
 /* XXX Error handling :-( */
@@ -1130,6 +1136,7 @@ static void init_threads(int thread_count, fz_context *context) {
         #endif
 
         threads[i].handle = SDL_CreateThread(render_thread,
+            "render thread",
             (void*)(threads + i));
         if (!threads[i].handle) {
             fprintf(stderr, "Creating thread failed: %s\n", SDL_GetError());
